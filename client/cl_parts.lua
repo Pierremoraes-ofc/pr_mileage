@@ -217,45 +217,11 @@ end)
 --   EVENTOS DE REDE — confirmações do servidor
 -- ============================================================
 
--- Lista de itens que são pneus — ao instalar, repara os pneus físicos do veículo
-local TYRE_PARTS = {
-    tire_common   = true,
-    tire_street   = true,
-    tire_sport    = true,
-    tire_race     = true,
-    tire_semislick = true,
-    tire_slick    = true,
-    tire_drift    = true,
-    tire_touring  = true,
-}
-
-local function RepairVehicleTyres(vehicle)
-    if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then return end
-    local tyreIndexes = {0, 1, 2, 3, 4, 5, 45, 47}
-    for _, tyreIndex in ipairs(tyreIndexes) do
-        SetVehicleTyreFixed(vehicle, tyreIndex)
-    end
-end
-
 RegisterNetEvent("pr_mileage:cl:partInstalled")
 AddEventHandler("pr_mileage:cl:partInstalled", function(plate, partName, durability)
     if plate ~= currentPlate then return end
     -- Recarrega as peças do banco para atualizar o cache
     loadPartsFromDB(plate, currentVehicleKm)
-    -- Força reset imediato do handling para os valores originais do veículo
-    if cache.vehicle and DoesEntityExist(cache.vehicle) then
-        TriggerEvent("pr_mileage:local:resetHandling", cache.vehicle)
-    end
-    -- Se for pneu, repara os pneus físicos do veículo
-    if TYRE_PARTS[partName] then
-        local vehicle = cache.vehicle
-        if not vehicle or not DoesEntityExist(vehicle) then
-            -- Tenta pegar o veículo mais próximo
-            local ped = PlayerPedId()
-            vehicle = GetClosestVehicle(GetEntityCoords(ped), 5.0, 0, 71)
-        end
-        RepairVehicleTyres(vehicle)
-    end
 end)
 
 RegisterNetEvent("pr_mileage:cl:partRemoved")
