@@ -5,8 +5,8 @@
 WearConfig = {}
 
 -- Intervalo do loop de desgaste no client (em ms)
--- 5000 = 5 segundos — reduz chamadas de rede sem perder precisão
-WearConfig.TickInterval = 5000
+-- Recomendado: 1000 (1 segundo) a 5000 (5 segundos)
+WearConfig.TickInterval = 1000
 
 -- Salva o desgaste no banco a cada quantos KM rodados com a peça
 -- (evita queries excessivas ao banco)
@@ -15,9 +15,9 @@ WearConfig.SaveThreshold = 1.0
 -- Status de saúde por faixa de % restante
 -- Usado nos exports GetPartsStatus / GetParts / GetVehicleParts
 WearConfig.StatusThresholds = {
-    good     = 1.00,   -- 100% → "Boa"     — sem efeitos
-    fair     = 0.30,   -- >= 30% → "Razoável" — sem efeitos
-    bad      = 0.00,   -- < 30% → "Ruim"   — efeitos ativos
+    good     = 0.60,   -- >= 60% → "Boa"
+    fair     = 0.30,   -- >= 30% → "Razoável"
+    bad      = 0.00,   -- <  30% → "Ruim"
 }
 
 WearConfig.StatusLabels = {
@@ -45,7 +45,8 @@ WearConfig.Effects = {
     rpm_override   = true,   -- Sobrescrever RPM
     steering_scale = true,   -- Limitar direção
     lateral_force  = true,   -- Força lateral (direção puxando)
+    -- Caso use script de performance é recomendado desativar esses efeitos ou adaptar para uso de forma eficiente sem gerar conflitos
     handling_float = true,   -- Alterações de handling (tração, freio, suspensão)
-    power_mult     = false,  -- DESABILITADO — conflito com legacydmc_dynamic
-    torque_mult    = false,  -- DESABILITADO — conflito com legacydmc_dynamic
+    power_mult     = true,   -- Redução de potência
+    torque_mult    = true,   -- Redução de torque                                       
 }

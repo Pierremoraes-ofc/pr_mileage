@@ -7,71 +7,6 @@
 local activeParticles   = {}   -- { [partName] = handle }
 local activeEffects     = {}   -- { [partName] = { type, ... } } efeitos persistentes ativos
 local wearThreadRunning = false
-local originalHandling  = {}   -- valores originais do handling do veículo atual
-
--- Controle de estado para efeitos que sincronizam pela rede
-local engineOnState    = nil
-local rpmOverrideState = nil
-local stallingActive   = false
-
--- Controle de estado do handling — evita SetVehicleHandlingFloat a cada tick
-local handlingApplied  = false  -- true = handling degradado está ativo
-local lastSymptomKey   = {}     -- { [partName] = symptom.label } último sintoma por peça
-
--- ============================================================
---   UTILITÁRIOS INTERNOS
--- ============================================================
-local function toGameSpeed(unitSpeed)
-    -- unitSpeed vem em KM/H ou MPH dependendo da config
-
-    if Config.Unit == "miles" then
-        -- MPH -> m/s
-        return unitSpeed / 2.236936
-    end
-
-    -- KM/H -> m/s
-    return unitSpeed / 3.6
-end
-
-
--- Captura os valores originais do handling ao entrar no veículo
--- Spawna um clone local temporário (invisível, sem colisão, sem rede) para ler os valores originais
-local function captureOriginalHandling(vehicle)
-    if not vehicle or not DoesEntityExist(vehicle) then return end
-    local model = GetEntityModel(vehicle)
-
-    RequestModel(model)
-    local timeout = 0
-    while not HasModelLoaded(model) and timeout < 3000 do
-        Wait(100)
-        timeout = timeout + 100
-    end
-    if not HasModelLoaded(model) then return end
-
-    -- false, false = não é missão, não é rede (local only — nenhum player vê)
-    local tempVeh = CreateVehicle(model, 0.0, 0.0, -1000.0, 0.0, false, false)
-
-    if tempVeh and DoesEntityExist(tempVeh) then
-        SetEntityVisible(tempVeh, false, false)
-        SetEntityCollision(tempVeh, false, false)
-
-        originalHandling = {
-            fSuspensionForce       = GetVehicleHandlingFloat(tempVeh, "CHandlingData", "fSuspensionForce"),
-            fSuspensionReboundDamp = GetVehicleHandlingFloat(tempVeh, "CHandlingData", "fSuspensionReboundDamp"),
-            fSuspensionCompDamp    = GetVehicleHandlingFloat(tempVeh, "CHandlingData", "fSuspensionCompDamp"),
-            fTractionLossMult      = GetVehicleHandlingFloat(tempVeh, "CHandlingData", "fTractionLossMult"),
-            fBrakeForce            = GetVehicleHandlingFloat(tempVeh, "CHandlingData", "fBrakeForce"),
-            fDriveInertia          = GetVehicleHandlingFloat(tempVeh, "CHandlingData", "fDriveInertia"),
-            fSuspensionRaise       = GetVehicleHandlingFloat(tempVeh, "CHandlingData", "fSuspensionRaise"),
-            fSuspensionUpperLimit  = GetVehicleHandlingFloat(tempVeh, "CHandlingData", "fSuspensionUpperLimit"),
-            fSuspensionLowerLimit  = GetVehicleHandlingFloat(tempVeh, "CHandlingData", "fSuspensionLowerLimit"),
-        }
-
-        DeleteVehicle(tempVeh)
-    end
-
-    SetModelAsNoLongerNeeded(model)
-end
 
 -- ============================================================
 --   APLICADORES DE EFEITO
@@ -126,21 +61,16 @@ Appliers["engine_health"] = function(vehicle, params)
     end
 end
 
--- Multiplicador de potência — só aplica se mudou
+-- Multiplicador de potência
 Appliers["power_mult"] = function(vehicle, params)
-    local current = GetVehicleHandlingFloat(vehicle, "CHandlingData", "fInitialDriveForce")
-    -- SetVehicleCheatPowerIncrease não tem getter, usa estado local
-    if not Appliers._powerState then Appliers._powerState = 1.0 end
-    if math.abs(Appliers._powerState - params.value) < 0.001 then return end
-    Appliers._powerState = params.value
-    Exported.powerMult(vehicle, params)
+    --print(("[pr_mileage][power_mult] Aplicando: value=%.2f"):format(params.value))
+    SetVehicleCheatPowerIncrease(vehicle, params.value)
 end
 
--- Multiplicador de torque — só aplica se mudou
+-- Multiplicador de torque (via fDriveInertia)
 Appliers["torque_mult"] = function(vehicle, params)
-    local current = GetVehicleHandlingFloat(vehicle, "CHandlingData", "fDriveInertia")
-    if math.abs(current - params.value) < 0.001 then return end
-    Exported.torqueMult(vehicle, params)
+    --print(("[pr_mileage][torque_mult] Aplicando: fDriveInertia=%.2f"):format(params.value))
+    SetVehicleHandlingFloat(vehicle, "CHandlingData", "fDriveInertia", params.value)
 end
 
 -- Veículo inoperante
@@ -148,43 +78,29 @@ Appliers["undriveable"] = function(vehicle, params)
     SetVehicleUndriveable(vehicle, params.value)
 end
 
--- Liga/desliga motor — só aplica se o estado mudou (evita sync de rede a cada tick)
+-- Liga/desliga motor
 Appliers["engine_on"] = function(vehicle, params)
-    local desired = params.value
-    if engineOnState == desired then return end  -- estado não mudou, não sincroniza
-    engineOnState = desired
-    SetVehicleEngineOn(vehicle, desired, true, true)
+    SetVehicleEngineOn(vehicle, params.value, true, true)
 end
 
 -- Vibração de câmera persistente
 -- ShakeGameplayCam inicia o shake mas para sozinho após alguns frames
 -- A combinação correta é: iniciar com ShakeGameplayCam e manter com SetGameplayCamShakeAmplitude
 -- IsGameplayCamShaking verifica se já está ativo para não reiniciar desnecessariamente
-Appliers["shake_cam"] = function(vehicle, params)
-    local speed = GetEntitySpeed(vehicle)
-    
-    -- converte params.speed para velocidade interna do GTA
-    local minSpeed = toGameSpeed(params.speed)
-    if speed < minSpeed then return end  -- só aplica acima do km definido em param.speed
+Appliers["shake_cam"] = function(_, params)
     local shakeType = params.type or "ROAD_VIBRATION_SHAKE"
     local intensity = params.intensity or 0.05
+    --print(("[pr_mileage][shake_cam] Aplicando: type=%s | intensity=%.3f | jaShaking=%s"):format(shakeType, intensity, tostring(IsGameplayCamShaking())))
     if not IsGameplayCamShaking() then
+        -- Inicia o shake (necessário para definir o tipo)
         ShakeGameplayCam(shakeType, intensity)
     end
+    -- Mantém a amplitude atualizada a cada tick (garante persistência)
     SetGameplayCamShakeAmplitude(intensity)
 end
 
--- Aplica força ao veículo (micro trancos) — só aplica se este client tem controle do veículo
+-- Aplica força ao veículo (micro trancos)
 Appliers["apply_force"] = function(vehicle, params)
-    -- Só aplica se este client é o dono da entidade (evita sync para outros players)
-    if not NetworkHasControlOfEntity(vehicle) then return end
-    -- Só aplica se o player está no banco do motorista
-    if cache.seat ~= -1 then return end
-    local speed = GetEntitySpeed(vehicle)
-    
-    -- converte params.speed para velocidade interna do GTA
-    local minSpeed = toGameSpeed(params.speed)
-    if speed < minSpeed then return end  -- só aplica acima do km definido em param.speed
     local x, y, z = params.x or 0.0, params.y or 0.0, params.z or 0.0
     local intensity = params.intensity or 0.5
     if params.random then
@@ -194,26 +110,15 @@ Appliers["apply_force"] = function(vehicle, params)
     ApplyForceToEntity(vehicle, 1, x, y, z, 0.0, 0.0, 0.0, 0, false, true, true, false, true)
 end
 
--- Altera float de handling — aplica a partir de 10 km/h (2.78 m/s)
+-- Altera float de handling
 Appliers["handling_float"] = function(vehicle, params)
-    local speed = GetEntitySpeed(vehicle)
-    
-    -- converte params.speed para velocidade interna do GTA
-    local minSpeed = toGameSpeed(params.speed)
-    if speed < minSpeed then return end  -- só aplica acima do km definido em param.speed
-    local current = GetVehicleHandlingFloat(vehicle, "CHandlingData", params.field)
-    if math.abs(current - params.value) < 0.001 then return end
-    Exported.handlingFloat(vehicle, params)
+    SetVehicleHandlingFloat(vehicle, "CHandlingData", params.field, params.value)
 end
 
 -- Estoura pneu
 Appliers["tyre_burst"] = function(vehicle, params)
-    local wheel = params.wheel
-    if wheel == nil then
-        wheel = math.random(0, 3)
-    end
-    if not IsVehicleTyreBurst(vehicle, wheel, false) then
-        SetVehicleTyreBurst(vehicle, wheel, true, 1000.0)
+    if not IsVehicleTyreBurst(vehicle, params.wheel, false) then
+        SetVehicleTyreBurst(vehicle, params.wheel, true, 1000.0)
     end
 end
 
@@ -228,26 +133,21 @@ Appliers["indicator"] = function(vehicle, params)
     SetVehicleIndicatorLights(vehicle, 1, params.right or false)
 end
 
--- Força RPM — só aplica se o valor mudou (evita sync de rede a cada tick)
+-- Força RPM
 Appliers["rpm_override"] = function(vehicle, params)
-    local desired = params.value
-    if rpmOverrideState == desired then return end  -- valor não mudou
-    rpmOverrideState = desired
-    Exported.rpmOverride(vehicle, params)
+    SetVehicleCurrentRpm(vehicle, params.value)
 end
 
--- Stall aleatório — só executa se não há stall em andamento (evita stalls simultâneos)
+-- Stall aleatório (desliga motor por 1-2 segundos)
 Appliers["stall"] = function(vehicle, params)
-    if stallingActive then return end  -- já está em stall, não inicia outro
     local chance = params.chance or 0.05
+    --print(("[pr_mileage][stall] Rolando chance: %.0f%% (chance=%.2f)"):format(chance * 100, chance))
     if math.random() < chance then
-        stallingActive = true
         SetVehicleEngineOn(vehicle, false, true, true)
         Wait(math.random(800, 2000))
         if DoesEntityExist(vehicle) then
             SetVehicleEngineOn(vehicle, true, true, true)
         end
-        stallingActive = false
     end
 end
 
@@ -256,18 +156,13 @@ Appliers["steering_scale"] = function(vehicle, params)
     SetVehicleSteeringScale(vehicle, params.value)
 end
 
--- Força lateral constante (direção desalinhada) — só aplica se tem controle do veículo
+-- Força lateral constante (direção desalinhada)
 Appliers["lateral_force"] = function(vehicle, params)
-    if not NetworkHasControlOfEntity(vehicle) then return end
-    -- Só aplica se o player está no banco do motorista
-    if cache.seat ~= -1 then return end
     local speed = GetEntitySpeed(vehicle)
-    
-    -- converte params.speed para velocidade interna do GTA
-    local minSpeed = toGameSpeed(params.speed)
-    if speed < minSpeed then return end  -- só aplica acima do km definido em param.speed
-    ApplyForceToEntity(vehicle, 1, params.value or 0.3, 0.0, 0.0,
-        0.0, 0.0, 0.0, 0, false, true, true, false, true)
+    if speed > 2.0 then
+        ApplyForceToEntity(vehicle, 1, params.value or 0.3, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0, false, true, true, false, true)
+    end
 end
 
 -- ============================================================
@@ -285,9 +180,8 @@ end
 local function resolveActiveSympom(partData, ratio)
     local active = nil
     for _, symptom in ipairs(partData.symptoms) do
-        -- Só ativa efeitos quando a peça está RUIM (threshold < 0.30)
-        -- Peça boa/razoável (>= 30% restante) = sem efeitos
-        if ratio <= symptom.threshold and symptom.threshold < 0.30 then
+        if ratio <= symptom.threshold then
+            -- Ativa o mais severo (menor threshold) entre os elegíveis
             if not active or symptom.threshold < active.threshold then
                 active = symptom
             end
@@ -306,16 +200,16 @@ local function clearAllEffects(vehicle)
         stopParticle(partName)
     end
 
-    -- Reseta TODOS os efeitos físicos
+    -- Reseta multiplicadores usando os natives corretos
     if vehicle and DoesEntityExist(vehicle) then
         SetVehicleCheatPowerIncrease(vehicle, 1.0)
+        SetVehicleHandlingFloat(vehicle, "CHandlingData", "fDriveInertia", 1.0)
         SetVehicleUndriveable(vehicle, false)
-        SetVehicleSteeringScale(vehicle, 1.0)  -- reseta direção
-        
-        Exported.setOriginalHandling(vehicle, originalHandling)
+        SetVehicleSteeringScale(vehicle, 1.0)
     end
-    -- Para o shake da câmera
+    -- Para o shake da câmera ao limpar efeitos
     StopGameplayCamShaking(true)
+
     activeEffects = {}
 end
 
@@ -425,66 +319,10 @@ exports("getAllParts", function()
 end)
 
 -- Limpa tudo (ao trocar de veículo, morrer etc)
-local lastVehicleRef = nil
-
 lib.onCache("vehicle", function(vehicle)
     if not vehicle then
-        -- Reseta handling diretamente no veículo antes de ele sumir
-        if lastVehicleRef and DoesEntityExist(lastVehicleRef) then
-
-            Exported.setOriginalHandling(lastVehicleRef, originalHandling)
-
-            SetVehicleSteeringScale(lastVehicleRef, 1.0)
-            SetVehicleCheatPowerIncrease(lastVehicleRef, 1.0)
-            SetVehicleUndriveable(lastVehicleRef, false)
-        end
-        clearAllEffects(lastVehicleRef)
-        lastVehicleRef   = nil
-        originalHandling = {}
+        clearAllEffects(nil)
         wearThreadRunning = false
-        engineOnState    = nil
-        rpmOverrideState = nil
-        stallingActive   = false
-        lastSymptomKey   = {}
-        handlingApplied  = false
-        StopGameplayCamShaking(true)
-    else
-        lastVehicleRef = vehicle
-        -- Captura valores originais imediatamente ao entrar no veículo
-        CreateThread(function()
-            captureOriginalHandling(vehicle)
-        end)
-        -- Reseta estados de controle para forçar reavaliação das peças
-        engineOnState    = nil
-        rpmOverrideState = nil
-        lastSymptomKey   = {}
-        -- Garante que o veículo está funcional ao entrar (reseta efeitos residuais)
-        SetVehicleUndriveable(vehicle, false)
-        SetVehicleEngineHealth(vehicle, 1000.0)
-        -- Repara pneus fisicamente (o loop vai estourar de novo se a peça estiver ruim)
-        for _, idx in ipairs({0,1,2,3,4,5,45,47}) do
-            SetVehicleTyreFixed(vehicle, idx)
-        end
-    end
-end)
-
--- Reset imediato ao instalar peça nova
-AddEventHandler("pr_mileage:local:resetHandling", function(vehicle)
-    if not vehicle or not DoesEntityExist(vehicle) then return end
-    StopGameplayCamShaking(true)
-    SetVehicleUndriveable(vehicle, false)
-    -- Religa o motor se o player está no banco do motorista
-    if cache.seat == -1 then
-        SetVehicleEngineOn(vehicle, true, false, true)
-    end
-    engineOnState = nil  -- reseta o estado para reaplicar se necessário
-    SetVehicleSteeringScale(vehicle, 1.0)
-    SetVehicleCheatPowerIncrease(vehicle, 1.0)
-
-    Exported.resetPartsInstalled(vehicle, originalHandling)
-
-    for partName, _ in pairs(activeParticles) do
-        stopParticle(partName)
     end
 end)
 
@@ -519,48 +357,25 @@ AddEventHandler("pr_mileage:local:applyWear", function(vehicle, allParts)
         local symptom = resolveActiveSympom(partDef, ratio)
 
         if symptom then
-            -- Atualiza o rastreamento do sintoma ativo
-            lastSymptomKey[partName] = symptom.label or "?"
-            -- Aplica os efeitos a cada tick (necessário para stall, shake_cam, etc.)
+            --print(("[pr_mileage][wear] %s → sintoma ATIVO: %s (threshold=%.0f%%)"):format(partName, symptom.label or "?", (symptom.threshold or 0) * 100))
             for _, effect in ipairs(symptom.effects) do
                 local toggled = WearConfig.Effects[effect.type]
                 if toggled ~= false then
                     local applier = Appliers[effect.type]
                     if applier then
-                        applier(vehicle, effect.params, partName)
+                        --print(("[pr_mileage][wear] %s → executando efeito: %s"):format(partName, effect.type))applier(vehicle, effect.params, partName)
                     else
-                        print(("[pr_mileage][wear] %s → EFEITO SEM APPLIER: %s"):format(partName, effect.type))
+                        --print(("[pr_mileage][wear] %s → EFEITO SEM APPLIER: %s"):format(partName, effect.type))
                     end
+                else
+                    --print(("[pr_mileage][wear] %s → efeito DESABILITADO em WearConfig: %s"):format(partName, effect.type))
                 end
             end
         else
-            -- Peça está boa — só reseta se havia sintoma ativo antes
-            if lastSymptomKey[partName] then
-                lastSymptomKey[partName] = nil
-                stopParticle(partName)
-                if vehicle and DoesEntityExist(vehicle) then
-                    
-                    Exported.resetPartsInstalled(vehicle, originalHandling)
-                    
-                    SetVehicleCheatPowerIncrease(vehicle, 1.0)
-                    SetVehicleSteeringScale(vehicle, 1.0)
-                    SetVehicleUndriveable(vehicle, false)
-                    -- Religa o motor se estava desligado por efeito de peça ruim
-                    if engineOnState == false then
-                        engineOnState = nil
-                        if cache.seat == -1 then
-                            SetVehicleEngineOn(vehicle, true, false, true)
-                        end
-                    end
-                    local tyreParts = {tire_common=true,tire_street=true,tire_sport=true,tire_race=true,tire_semislick=true,tire_slick=true,tire_drift=true,tire_touring=true}
-                    if tyreParts[partName] then
-                        for _, idx in ipairs({0,1,2,3,4,5,45,47}) do
-                            SetVehicleTyreFixed(vehicle, idx)
-                        end
-                    end
-                end
-                StopGameplayCamShaking(false)
-            end
+            --print(("[pr_mileage][wear] %s → nenhum sintoma ativo (restante=%.1f%%)"):format(partName, ratio * 100))
+            stopParticle(partName)
+            -- Para o shake da câmera se estava ativo por esta peça
+            StopGameplayCamShaking(false)
         end
 
         ::continue::
