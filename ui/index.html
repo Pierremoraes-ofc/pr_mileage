@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.1.1/css/all.min.css" />
+    <title>PP-Adjust</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+        body,
+        html {
+            height: 100%;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: flex-start;
+            color: white;
+            font-family: "Inter", "IBM Plex Sans", -apple-system, sans-serif;
+            visibility: hidden;
+            background: transparent;
+            overflow: hidden;
+        }
+
+        .container {
+            border-radius: 5px;
+            border: 2px solid rgba(0, 97, 194, 0.8);
+            margin-left: 20px;
+            width: 320px;
+            padding: 20px;
+            background-color: #101418;
+            background-image: radial-gradient(circle, rgba(0, 59, 117, 0.459) 40%, rgba(20, 26, 31, 0.781) 100%);
+            display: flex;
+            flex-direction: column;
+            opacity: 0;
+            transform: scale(0.5);
+            transition: opacity 0.5s, transform 0.5s;
+        }
+
+        @keyframes zoomIn {
+            from {
+                opacity: 0;
+                transform: scale(0.5);
+            }
+
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        @keyframes zoomOut {
+            from {
+                opacity: 1;
+                transform: scale(1);
+            }
+
+            to {
+                opacity: 0;
+                transform: scale(0.5);
+            }
+        }
+
+        .visible {
+            animation: zoomIn 0.5s forwards;
+        }
+
+        .hidden {
+            animation: zoomOut 0.5s forwards;
+        }
+
+        .keys-list {
+            display: flex;
+            flex-wrap: wrap;
+            width: 100%;
+        }
+
+        .key-pair {
+            display: flex;
+            align-items: center;
+            width: 100%;
+            margin-bottom: 8px;
+        }
+
+        .key {
+            width: 2vh;
+            display: flex;
+            text-align: center;
+            justify-content: center;
+            align-items: center;
+            height: 2vh;
+            border: 2px solid rgba(51, 153, 255, 0.6);
+            background-color: #003a75;
+            box-shadow: 0 0 16px 0 rgba(0, 107, 214, 0.7), 0px 2px 30px 0px rgba(0, 0, 0, 0.55) inset;
+            padding: 10px;
+            border-radius: 5px;
+            margin-right: 10px;
+            font-size: 1.1em;
+            font-weight: bold;
+        }
+
+        .text {
+            background-color: transparent;
+            box-shadow: none;
+            border: none;
+            color: white;
+            font-size: 1.1em;
+        }
+
+        .title-container {
+            border-radius: 20px;
+            border: 1px solid #0253a6;
+            text-align: center;
+            display: flex;
+            justify-content: center;
+            padding: 0;
+            background-color: #0c2037;
+            margin-bottom: 20px;
+            width: 100%;
+        }
+
+        .title {
+            margin: 5px 0;
+            padding: 0;
+            font-size: 25px;
+        }
+
+        .rotate-90 {
+            transform: rotate(90deg);
+            display: inline-block;
+        }
+
+        /* DEBUG PANEL STYLES */
+        #debug-overlay {
+            display: none;
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            width: 380px;
+            background: rgba(10, 10, 10, 0.97);
+            border: 1px solid #2a2a2a;
+            border-radius: 16px;
+            z-index: 999999;
+            color: white;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
+            overflow: hidden;
+            flex-direction: column;
+        }
+
+        #debug-overlay.debug-visible {
+            display: flex;
+        }
+
+        .debug-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 18px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            background: #111;
+        }
+
+        .debug-header h3 {
+            font-size: 13px;
+            font-weight: 900;
+            color: #60a5fa;
+            letter-spacing: 0.1em;
+            margin: 0;
+        }
+
+        .debug-close-btn {
+            background: none;
+            border: none;
+            color: #f87171;
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 6px;
+            font-size: 18px;
+            line-height: 1;
+        }
+
+        .debug-close-btn:hover {
+            background: rgba(248, 113, 113, 0.15);
+        }
+
+        .debug-body {
+            padding: 16px 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .debug-section-title {
+            font-size: 10px;
+            font-weight: 700;
+            color: #64748b;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            margin-bottom: 2px;
+        }
+
+        .debug-slider-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .debug-slider-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .debug-slider-row label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #94a3b8;
+            min-width: 75px;
+        }
+
+        .debug-slider-row input[type="range"] {
+            flex: 1;
+            accent-color: #60a5fa;
+            height: 6px;
+        }
+
+        .debug-slider-row .slider-value {
+            font-size: 12px;
+            font-weight: 800;
+            color: #60a5fa;
+            min-width: 48px;
+            text-align: right;
+        }
+
+        .debug-toggle-group {
+            display: flex;
+            gap: 8px;
+        }
+
+        .debug-toggle {
+            flex: 1;
+            padding: 8px 10px;
+            border-radius: 10px;
+            border: 2px solid #1e3a5f;
+            background: #0c1929;
+            color: #60a5fa;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .debug-state-btn {
+            width: 100%;
+            padding: 9px 14px;
+            border-radius: 10px;
+            border: 1px solid;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            text-align: left;
+            margin-bottom: 4px;
+        }
+
+        .debug-state-btn.blue {
+            background: rgba(96, 165, 250, 0.1);
+            color: #60a5fa;
+            border-color: rgba(96, 165, 250, 0.25);
+        }
+
+        .debug-state-btn.yellow {
+            background: rgba(250, 204, 21, 0.1);
+            color: #facc15;
+            border-color: rgba(250, 204, 21, 0.25);
+        }
+
+        .debug-state-btn.green {
+            background: rgba(74, 222, 128, 0.1);
+            color: #4ade80;
+            border-color: rgba(74, 222, 128, 0.25);
+        }
+
+        .debug-state-btn.red {
+            background: rgba(248, 113, 113, 0.1);
+            color: #f87171;
+            border-color: rgba(248, 113, 113, 0.25);
+        }
+
+        .debug-state-btn.gray {
+            background: rgba(148, 163, 184, 0.08);
+            color: #94a3b8;
+            border-color: rgba(148, 163, 184, 0.2);
+        }
+
+        .debug-divider {
+            border: none;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+            margin: 4px 0;
+        }
+
+        .debug-copy-btn {
+            width: 100%;
+            padding: 12px;
+            border-radius: 12px;
+            border: 2px solid #1e3a5f;
+            background: linear-gradient(135deg, #0c1929, #132d4b);
+            color: #60a5fa;
+            font-size: 13px;
+            font-weight: 800;
+            cursor: pointer;
+        }
+
+        .debug-config-output {
+            background: #111;
+            border: 1px solid #2a2a2a;
+            border-radius: 10px;
+            padding: 10px 14px;
+            font-size: 11px;
+            font-family: monospace;
+            color: #94a3b8;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 120px;
+            overflow-y: auto;
+            display: none;
+        }
+
+        /* ===== INTERACTION OVERLAY (clique no prop) ===== */
+        #interaction-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 9990;
+            cursor: crosshair;
+        }
+
+        #corner-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        #interaction-hint {
+            position: absolute;
+            bottom: 72px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(5, 10, 20, 0.82);
+            border: 1px solid rgba(96, 165, 250, 0.35);
+            border-radius: 10px;
+            padding: 8px 20px;
+            color: #e2e8f0;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 3px;
+            pointer-events: none;
+            white-space: nowrap;
+        }
+
+        #interaction-hint .hint-sub {
+            font-size: 10px;
+            color: #64748b;
+            font-weight: 400;
+        }
+
+        /* ===== CALIBRATION PANEL ===== */
+        #calibrate-panel {
+            display: none;
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(5, 10, 20, 0.92);
+            border: 1px solid rgba(248, 113, 113, 0.5);
+            border-radius: 12px;
+            padding: 14px 24px;
+            color: white;
+            font-size: 12px;
+            z-index: 9995;
+            pointer-events: none;
+            min-width: 460px;
+        }
+
+        #calibrate-panel .cal-title {
+            font-size: 11px;
+            font-weight: 900;
+            color: #f87171;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        #calibrate-panel .cal-corner {
+            font-size: 16px;
+            font-weight: 900;
+            color: #fbbf24;
+            text-align: center;
+            margin-bottom: 8px;
+        }
+
+        #calibrate-panel .cal-coords {
+            font-family: monospace;
+            font-size: 12px;
+            color: #94a3b8;
+            text-align: center;
+            margin-bottom: 12px;
+        }
+
+        #calibrate-panel .cal-coords span {
+            color: #60a5fa;
+            font-weight: 700;
+        }
+
+        #calibrate-panel .cal-keys {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            font-size: 10px;
+            color: #64748b;
+        }
+
+        #calibrate-panel .cal-keys b {
+            color: #e2e8f0;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="container" class="container hidden">
+        <div class="title-container">
+            <h1 class="title" id="title">Adjust animation</h1>
+        </div>
+        <div class="keys-list"></div>
+    </div>
+
+    <!-- CALIBRATION PANEL -->
+    <div id="calibrate-panel">
+        <div class="cal-title">🔴 MODO CALIBRAÇÃO — CANTOS DA TELA</div>
+        <div class="cal-corner" id="cal-corner-name">TL — SUPERIOR ESQUERDO</div>
+        <div class="cal-coords" id="cal-coords">X: <span>0.000</span> &nbsp; Y: <span>0.000</span> &nbsp; Z:
+            <span>0.000</span>
+        </div>
+        <div class="cal-keys">
+            <span><b>A/D</b> = X (esq/dir)</span>
+            <span><b>W/S</b> = Z (cima/baixo)</span>
+            <span><b>Q/E</b> = Y (prof.)</span>
+            <span><b>Y</b> = próx. canto</span>
+            <span><b>SHIFT</b> = rápido</span>
+            <span><b>ENTER</b> = salvar</span>
+            <span><b>X</b> = cancelar</span>
+        </div>
+    </div>
+
+    <!-- INTERACTION OVERLAY (clique no prop 3D) -->
+    <div id="interaction-overlay">
+        <canvas id="corner-canvas"></canvas>
+        <div id="interaction-hint">
+            CLIQUE NA TELA DO SCANNER
+            <span class="hint-sub">Pressione BACKSPACE para sair </span>
+        </div>
+    </div>
+
+    <!-- DEBUG PANEL -->
+    <div id="debug-overlay">
+        <div class="debug-header">
+            <h3>🔧 SCANNER DEBUG</h3>
+            <button class="debug-close-btn" title="Fechar">✕</button>
+        </div>
+        <div class="debug-body">
+            <span class="debug-section-title">CSS Transform (UV Fix)</span>
+            <div class="debug-slider-group">
+                <div class="debug-slider-row">
+                    <label>Scale X</label>
+                    <input type="range" id="slider-scaleX" min="-2" max="2" step="0.1" value="1" />
+                    <span class="slider-value" id="slider-scaleX-val">1.0</span>
+                </div>
+                <div class="debug-slider-row">
+                    <label>Scale Y</label>
+                    <input type="range" id="slider-scaleY" min="-2" max="2" step="0.1" value="1.5" />
+                    <span class="slider-value" id="slider-scaleY-val">1.5</span>
+                </div>
+                <div class="debug-slider-row">
+                    <label>Rotate</label>
+                    <input type="range" id="slider-rotate" min="0" max="360" step="1" value="0" />
+                    <span class="slider-value" id="slider-rotate-val">0°</span>
+                </div>
+                <div class="debug-slider-row">
+                    <label>Translate X</label>
+                    <input type="range" id="slider-translateX" min="-50" max="50" step="1" value="0" />
+                    <span class="slider-value" id="slider-translateX-val">0%</span>
+                </div>
+                <div class="debug-slider-row">
+                    <label>Translate Y</label>
+                    <input type="range" id="slider-translateY" min="-50" max="50" step="1" value="-16" />
+                    <span class="slider-value" id="slider-translateY-val">-16%</span>
+                </div>
+                <div class="debug-slider-row highlight"
+                    style="background: rgba(96, 165, 250, 0.1); border-radius: 8px; padding: 4px;">
+                    <label>Zoom (FOV)</label>
+                    <input type="range" id="slider-fov" min="1" max="110" step="1" value="40" />
+                    <span class="slider-value" id="slider-fov-val">40</span>
+                </div>
+            </div>
+            <div class="debug-toggle-group">
+                <button class="debug-toggle" id="btn-reset">⊘ Reset</button>
+            </div>
+            <hr class="debug-divider" />
+            <span class="debug-section-title">Simulação de Estados</span>
+            <div class="debug-state-grid">
+                <button class="debug-state-btn blue" id="dbg-state-idle-veh">► IDLE (Veículo)</button>
+                <button class="debug-state-btn yellow" id="dbg-state-scanning">► SCANNING</button>
+                <button class="debug-state-btn green" id="dbg-state-result-pos">► GSR Positivo</button>
+                <button class="debug-state-btn green" id="dbg-state-result-neg">► GSR Negativo</button>
+                <button class="debug-state-btn red" id="dbg-state-error">► Erro</button>
+                <button class="debug-state-btn gray" id="dbg-state-hide">Hide</button>
+            </div>
+            <hr class="debug-divider" />
+            <span class="debug-section-title">Exportar Configuração</span>
+            <button class="debug-copy-btn" id="btn-copy-config">📋 COPIAR CONFIG</button>
+            <pre class="debug-config-output" id="config-output"></pre>
+        </div>
+    </div>
+
+    <script>
+        const container = document.getElementById("container");
+        const debugOverlay = document.getElementById("debug-overlay");
+        const translations = {};
+        let cssTransform = { scaleX: 1.0, scaleY: 1.5, rotate: 0, translateX: 0, translateY: -16, fov: 40 };
+
+        const updateKeys = (keys) => {
+            const keysList = document.querySelector(".keys-list");
+            keysList.innerHTML = '';
+            keys.forEach(({ key, text }) => {
+                const keyPairDiv = document.createElement("div");
+                keyPairDiv.classList.add("key-pair");
+                const keyDiv = document.createElement("div");
+                keyDiv.classList.add("key");
+                if (key === "Enter") keyDiv.innerHTML = '<i class="fa-solid fa-arrow-turn-down rotate-90"></i>';
+                else if (key === "Shift") keyDiv.innerHTML = '<i class="fa-solid fa-arrow-up"></i>';
+                else keyDiv.textContent = key;
+                const textSpan = document.createElement("span");
+                textSpan.classList.add("text");
+                textSpan.textContent = translations[text] || text;
+                keyPairDiv.appendChild(keyDiv);
+                keyPairDiv.appendChild(textSpan);
+                keysList.appendChild(keyPairDiv);
+            });
+        };
+
+        const post = (name, data = {}) => {
+            fetch(`https://pr_mileage/${name}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            }).catch(() => { });
+        };
+
+        // DEBUG LOGIC
+        const updateDebugValues = () => {
+            document.getElementById('slider-scaleX-val').textContent = cssTransform.scaleX.toFixed(1);
+            document.getElementById('slider-scaleY-val').textContent = cssTransform.scaleY.toFixed(1);
+            document.getElementById('slider-rotate-val').textContent = cssTransform.rotate + '°';
+            document.getElementById('slider-translateX-val').textContent = cssTransform.translateX + '%';
+            document.getElementById('slider-translateY-val').textContent = cssTransform.translateY + '%';
+            document.getElementById('slider-fov-val').textContent = cssTransform.fov;
+        };
+
+        const sendTransform = () => { post('updateDuiTransform', cssTransform); };
+
+        ['scaleX', 'scaleY', 'rotate', 'translateX', 'translateY', 'fov'].forEach(prop => {
+            document.getElementById('slider-' + prop).addEventListener('input', (e) => {
+                cssTransform[prop] = parseFloat(e.target.value);
+                updateDebugValues();
+                sendTransform();
+            });
+        });
+
+        document.getElementById('btn-reset').addEventListener('click', () => {
+            cssTransform = { scaleX: 1, scaleY: 1, rotate: 0, translateX: 0, translateY: 0, fov: 40 };
+            ['scaleX', 'scaleY', 'rotate', 'translateX', 'translateY', 'fov'].forEach(p => {
+                document.getElementById('slider-' + p).value = cssTransform[p];
+            });
+            updateDebugValues();
+            sendTransform();
+        });
+
+        document.querySelector('.debug-close-btn').addEventListener('click', () => {
+            debugOverlay.classList.remove('debug-visible');
+            post('closeDebugPanel');
+        });
+
+        // Debug States
+        document.getElementById('dbg-state-idle-veh').onclick = () => post('debugSetState', { action: 'showScannerApp', data: { type: 'vehicle', distance: '1.2', plate: 'BRA2E19', model: 'SULTAN' } });
+        document.getElementById('dbg-state-scanning').onclick = () => post('debugSetState', { action: 'setScannerState', data: { state: 'scanning' } });
+        document.getElementById('dbg-state-result-pos').onclick = () => post('debugSetState', { action: 'setScannerResult', data: { type: 'person', gsr: true, targetName: 'John Doe', dateTime: new Date().toLocaleString() } });
+        document.getElementById('dbg-state-result-neg').onclick = () => post('debugSetState', { action: 'setScannerResult', data: { type: 'person', gsr: false, targetName: 'Jane Doe', dateTime: new Date().toLocaleString() } });
+        document.getElementById('dbg-state-error').onclick = () => post('debugSetState', { action: 'setScannerResult', data: { type: 'vehicle', error: 'Erro de leitura', dateTime: new Date().toLocaleString() } });
+        document.getElementById('dbg-state-hide').onclick = () => post('debugSetState', { action: 'hideScannerApp' });
+
+        document.getElementById('btn-copy-config').onclick = () => {
+            const configText = JSON.stringify({ transform: cssTransform }, null, 2);
+            document.getElementById('config-output').textContent = configText;
+            document.getElementById('config-output').style.display = 'block';
+
+            // Tenta copiar, mas falha graciosamente se houver bloqueio de permissão
+            try {
+                navigator.clipboard.writeText(configText).catch(() => { });
+            } catch (e) { }
+
+            post('copyConfig', { config: configText });
+
+            const btn = document.getElementById('btn-copy-config');
+            btn.textContent = '✓ VEJA O CONSOLE (F8)!';
+            setTimeout(() => { btn.textContent = '📋 COPIAR CONFIG'; }, 3000);
+        };
+
+        window.addEventListener("message", (event) => {
+            const { action, data } = event.data;
+            if (action === "updateTranslations") Object.assign(translations, data);
+            if (action === "open") {
+                document.getElementById('title').textContent = translations['title'] || 'Adjust animation';
+                updateKeys(data);
+                container.classList.add("visible");
+                container.classList.remove("hidden");
+            } else if (action === "close") {
+                container.classList.add("hidden");
+                container.classList.remove("visible");
+            } else if (action === "toggleDebugPanel") {
+                if (data.visible) debugOverlay.classList.add('debug-visible');
+                else debugOverlay.classList.remove('debug-visible');
+            } else if (action === "setInteractionLines") {
+                showInteractionLines = event.data.visible;
+                if (!showInteractionLines) clearCanvas();
+            } else if (action === "updatePropCorners") {
+                propCorners = event.data.corners;
+                if (calibrateActive || showInteractionLines) drawQuad(propCorners, false);
+            } else if (action === "setInteractionMode") {
+                interactionActive = event.data.active;
+                interactionOverlay.style.display = event.data.active ? 'block' : 'none';
+                if (!event.data.active) clearCanvas();
+            } else if (action === "setCalibrateMode") {
+                calibrateActive = event.data.active;
+                calibratePanel.style.display = event.data.active ? 'block' : 'none';
+                if (event.data.active) {
+                    interactionOverlay.style.display = 'block';
+                    calCornerIdx = (event.data.cornerIndex || 1) - 1;
+                    updateCalibratePanel(event.data.cornerLocal, calCornerIdx);
+                } else {
+                    if (!interactionActive) interactionOverlay.style.display = 'none';
+                    clearCanvas();
+                }
+            } else if (action === "updateCalibrateState") {
+                propCorners = event.data.corners;
+                calCornerIdx = (event.data.cornerIndex || 1) - 1;
+                drawQuad(propCorners, false, calCornerIdx);
+                updateCalibratePanel(event.data.cornerLocal, calCornerIdx);
+            }
+        });
+
+        // ===== SCANNER INTERACTION — clique na tela do prop =====
+        const interactionOverlay = document.getElementById('interaction-overlay');
+        const cornerCanvas = document.getElementById('corner-canvas');
+        const ctx = cornerCanvas.getContext('2d');
+        let propCorners = null;
+        let interactionActive = false;
+        let showInteractionLines = false;
+
+        function resizeCanvas() {
+            cornerCanvas.width = window.innerWidth;
+            cornerCanvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        function clearCanvas() { ctx.clearRect(0, 0, cornerCanvas.width, cornerCanvas.height); }
+
+        function cross2d(ax, ay, bx, by) { return ax * by - ay * bx; }
+
+        function pointInConvexQuad(px, py, pts) {
+            let sign = null;
+            for (let i = 0; i < 4; i++) {
+                const a = pts[i], b = pts[(i + 1) % 4];
+                const c = cross2d(b.x - a.x, b.y - a.y, px - a.x, py - a.y);
+                if (Math.abs(c) < 1e-10) continue;
+                const s = c > 0;
+                if (sign === null) sign = s;
+                else if (sign !== s) return false;
+            }
+            return true;
+        }
+
+        // Inversão bilinear por Newton — mapeia ponto de tela → UV (0‒1)
+        function bilinearUV(px, py, p00, p10, p01, p11) {
+            let u = 0.5, v = 0.5;
+            for (let i = 0; i < 20; i++) {
+                const qx = p00.x * (1 - u) * (1 - v) + p10.x * u * (1 - v) + p01.x * (1 - u) * v + p11.x * u * v;
+                const qy = p00.y * (1 - u) * (1 - v) + p10.y * u * (1 - v) + p01.y * (1 - u) * v + p11.y * u * v;
+                const dxdu = (p10.x - p00.x) * (1 - v) + (p11.x - p01.x) * v;
+                const dxdv = (p01.x - p00.x) * (1 - u) + (p11.x - p10.x) * u;
+                const dydu = (p10.y - p00.y) * (1 - v) + (p11.y - p01.y) * v;
+                const dydv = (p01.y - p00.y) * (1 - u) + (p11.y - p10.y) * u;
+                const det = dxdu * dydv - dxdv * dydu;
+                if (Math.abs(det) < 1e-12) break;
+                const dx = px - qx, dy = py - qy;
+                u += (dydv * dx - dxdv * dy) / det;
+                v += (dxdu * dy - dydu * dx) / det;
+                u = Math.max(-0.1, Math.min(1.1, u));
+                v = Math.max(-0.1, Math.min(1.1, v));
+                if (Math.abs(dx) < 1e-7 && Math.abs(dy) < 1e-7) break;
+            }
+            return { u: Math.max(0, Math.min(1, u)), v: Math.max(0, Math.min(1, v)) };
+        }
+
+        function drawQuad(corners, hovered, selectedIdx) {
+            clearCanvas();
+            if (!corners || corners.length < 4) return;
+            const W = cornerCanvas.width, H = cornerCanvas.height;
+            const pts = corners.map(c => ({ x: c.x * W, y: c.y * H }));
+
+            ctx.beginPath();
+            ctx.moveTo(pts[0].x, pts[0].y);
+            for (let i = 1; i < 4; i++) ctx.lineTo(pts[i].x, pts[i].y);
+            ctx.closePath();
+
+            ctx.strokeStyle = hovered ? 'rgba(96,165,250,0.95)' : 'rgba(96,165,250,0.45)';
+            ctx.lineWidth = hovered ? 2 : 1;
+            ctx.shadowColor = 'rgba(96,165,250,0.7)';
+            ctx.shadowBlur = hovered ? 14 : 5;
+            ctx.stroke();
+
+            ctx.fillStyle = hovered ? 'rgba(96,165,250,0.10)' : 'rgba(96,165,250,0.03)';
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // Pontos nos cantos — selecionado em vermelho/maior
+            for (let i = 0; i < pts.length; i++) {
+                const isSelected = (selectedIdx !== undefined && i === selectedIdx);
+                ctx.fillStyle = isSelected ? 'rgba(248,113,113,0.95)' : 'rgba(96,165,250,0.85)';
+                ctx.beginPath();
+                ctx.arc(pts[i].x, pts[i].y, isSelected ? 7 : 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        function flashQuad(corners) {
+            const W = cornerCanvas.width, H = cornerCanvas.height;
+            const pts = corners.map(c => ({ x: c.x * W, y: c.y * H }));
+            ctx.beginPath();
+            ctx.moveTo(pts[0].x, pts[0].y);
+            for (let i = 1; i < 4; i++) ctx.lineTo(pts[i].x, pts[i].y);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(96,165,250,0.35)';
+            ctx.fill();
+            setTimeout(() => {
+                if (!calibrateActive && !showInteractionLines) clearCanvas();
+                else drawQuad(corners, false);
+            }, 180);
+        }
+
+        interactionOverlay.addEventListener('mousemove', (e) => {
+            if (!propCorners || propCorners.length < 4) return;
+            const px = e.clientX / window.innerWidth;
+            const py = e.clientY / window.innerHeight;
+            const pts = propCorners.map(c => ({ x: c.x, y: c.y }));
+
+            // SÓ DESENHA A MOLDURA SE ESTIVER CALIBRANDO, EM DEBUG OU SE A ENGRENAGEM FOI TOCADA
+            const debugOverlay = document.getElementById('debug-overlay');
+            const isDebugVisible = debugOverlay && debugOverlay.classList.contains('visible');
+
+            if (calibrateActive || isDebugVisible || showInteractionLines) {
+                drawQuad(propCorners, pointInConvexQuad(px, py, pts));
+            } else {
+                clearCanvas();
+                interactionOverlay.style.cursor = pointInConvexQuad(px, py, pts) ? 'pointer' : 'default';
+            }
+        });
+
+        interactionOverlay.addEventListener('click', (e) => {
+            if (propCorners && propCorners.length === 4) {
+                const px = e.clientX, py = e.clientY;
+                const W = cornerCanvas.width, H = cornerCanvas.height;
+                const pts = propCorners.map(c => ({ x: c.x * W, y: c.y * H }));
+
+                // Só clica se estiver DENTRO da área azul (usando a sua função pointInConvexQuad)
+                if (pointInConvexQuad(px, py, pts)) {
+                    const uv = bilinearUV(px, py, pts[0], pts[1], pts[3], pts[2]);
+                    flashQuad(propCorners);
+                    post('propClick', { u: uv.u, v: uv.v });
+                }
+            }
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && interactionActive) post('closeInteraction');
+        });
+
+        // ===== CALIBRATION PANEL =====
+        const calibratePanel = document.getElementById('calibrate-panel');
+        const CORNER_LABELS = ['TL — SUPERIOR ESQUERDO', 'TR — SUPERIOR DIREITO', 'BR — INFERIOR DIREITO', 'BL — INFERIOR ESQUERDO'];
+        let calibrateActive = false;
+        let calCornerIdx = 0;
+
+        function updateCalibratePanel(localCorners, idx) {
+            if (!localCorners || !localCorners[idx]) return;
+            const c = localCorners[idx];
+            document.getElementById('cal-corner-name').textContent = CORNER_LABELS[idx] || ('CANTO ' + (idx + 1));
+            const spans = document.getElementById('cal-coords').querySelectorAll('span');
+            if (spans[0]) spans[0].textContent = c.x.toFixed(5);
+            if (spans[1]) spans[1].textContent = c.y.toFixed(5);
+            if (spans[2]) spans[2].textContent = c.z.toFixed(5);
+        }
+
+        setTimeout(() => { document.body.style.visibility = "visible"; }, 500);
+    </script>
+</body>
+
+</html>>

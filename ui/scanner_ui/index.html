@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scanner DUI Test</title>
+    <link rel="stylesheet" href="scanner.css" />
+</head>
+
+<body>
+    <!-- ================================================================
+         SCANNER UI (renderizado na textura da arma via DUI)
+         ================================================================ -->
+    <div id="scanner-root">
+        <!-- Top 1/3 — fora da UV da arma -->
+        <div class="scanner-spacer"></div>
+
+        <!-- Bottom 2/3 — visível na arma -->
+        <div class="scanner-body">
+            <!-- HEADER -->
+            <div class="scanner-header" style="position: relative;">
+                <!-- GATILHO DE CONFIG (SVG NÍTIDO) -->
+                <div id="settings-trigger"
+                    style="position:absolute; top:-5px; right:-10px; width:60px; height:60px; padding:15px; opacity:0.8; cursor:pointer; z-index:999;">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#60a5fa"
+                        stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3" />
+                        <path
+                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                    </svg>
+                </div>
+                <div class="scanner-header-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:100%;">
+                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                    </svg>
+                </div>
+                <div>
+                    <div class="scanner-header-title">SCANNER</div>
+                    <div class="scanner-header-subtitle">OBD-II</div>
+                </div>
+            </div>
+
+            <!-- STATES (populated by JS) -->
+            <div class="scanner-states"></div>
+        </div>
+    </div>
+
+    <!-- ================================================================
+         DEBUG PANEL (NUI overlay — /scandebug)
+         ================================================================ -->
+    <div id="debug-overlay">
+        <div class="debug-header">
+            <h3>🔧 SCANNER DEBUG</h3>
+            <button class="debug-close-btn" title="Fechar">✕</button>
+        </div>
+
+        <div class="debug-body">
+            <!-- CSS Transform Controls -->
+            <span class="debug-section-title">CSS Transform (UV Fix)</span>
+
+            <div class="debug-slider-group">
+                <div class="debug-slider-row">
+                    <label>Scale X</label>
+                    <input type="range" id="slider-scaleX" min="-2" max="2" step="0.1" value="1" />
+                    <span class="slider-value" id="slider-scaleX-val">1.0</span>
+                </div>
+                <div class="debug-slider-row">
+                    <label>Scale Y</label>
+                    <input type="range" id="slider-scaleY" min="-2" max="2" step="0.1" value="1" />
+                    <span class="slider-value" id="slider-scaleY-val">1.0</span>
+                </div>
+                <div class="debug-slider-row">
+                    <label>Rotate</label>
+                    <input type="range" id="slider-rotate" min="0" max="360" step="1" value="0" />
+                    <span class="slider-value" id="slider-rotate-val">0°</span>
+                </div>
+                <div class="debug-slider-row">
+                    <label>Translate X</label>
+                    <input type="range" id="slider-translateX" min="-50" max="50" step="1" value="0" />
+                    <span class="slider-value" id="slider-translateX-val">0%</span>
+                </div>
+                <div class="debug-slider-row">
+                    <label>Translate Y</label>
+                    <input type="range" id="slider-translateY" min="-50" max="50" step="1" value="0" />
+                    <span class="slider-value" id="slider-translateY-val">0%</span>
+                </div>
+            </div>
+
+            <!-- Quick actions -->
+            <div class="debug-toggle-group">
+                <button class="debug-toggle" id="btn-flip-x">↔ Flip X</button>
+                <button class="debug-toggle" id="btn-flip-y">↕ Flip Y</button>
+                <button class="debug-toggle" id="btn-rotate-180">⟳ 180°</button>
+                <button class="debug-toggle" id="btn-reset">⊘ Reset</button>
+            </div>
+
+            <hr class="debug-divider" />
+
+            <!-- State Simulation -->
+            <span class="debug-section-title">Simulação de Estados</span>
+
+            <div class="debug-state-grid">
+                <button class="debug-state-btn blue" id="dbg-state-idle-veh">► IDLE (Veículo)</button>
+                <button class="debug-state-btn blue" id="dbg-state-idle-ped">► IDLE (Pessoa)</button>
+                <button class="debug-state-btn yellow" id="dbg-state-scanning">► SCANNING (Load)</button>
+                <button class="debug-state-btn green" id="dbg-state-result-pos">► Result: GSR Positivo</button>
+                <button class="debug-state-btn green" id="dbg-state-result-neg">► Result: GSR Negativo</button>
+                <button class="debug-state-btn green" id="dbg-state-result-veh">► Result: Veículo DNA</button>
+                <button class="debug-state-btn red" id="dbg-state-error">► Result: Erro</button>
+                <button class="debug-state-btn gray" id="dbg-state-hide">Fechar Visor (Hide)</button>
+            </div>
+
+            <hr class="debug-divider" />
+
+            <!-- Export Config -->
+            <span class="debug-section-title">Exportar Configuração</span>
+            <button class="debug-copy-btn" id="btn-copy-config">📋 COPIAR CONFIG</button>
+            <pre class="debug-config-output" id="config-output" style="display:none;"></pre>
+        </div>
+    </div>
+
+    <script src="scanner.js"></script>
+</body>
+
+</html>

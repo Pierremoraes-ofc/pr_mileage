@@ -1,0 +1,1000 @@
+/* =========================================================================
+   Scanner DUI Test — Styles
+   Replicates ScannerApp.tsx visual design in vanilla CSS
+   ========================================================================= */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+*, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* =========================================================================
+   Main Scanner Layout
+   ========================================================================= */
+
+#scanner-root {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    background: transparent;
+}
+
+/* Top 1/3 — fora da UV, transparente */
+.scanner-spacer {
+    height: 33.33%;
+    flex-shrink: 0;
+}
+
+/* Bottom 2/3 — visível na tela da arma */
+.scanner-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: #0a0a0a;
+    padding: 20px 30px;
+    overflow: hidden;
+}
+
+/* =========================================================================
+   Header
+   ========================================================================= */
+
+.scanner-header {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding-bottom: 16px;
+    border-bottom: 2px solid #1e3a5f;
+    margin-bottom: 16px;
+    flex-shrink: 0;
+}
+
+.scanner-header-icon {
+    width: 44px;
+    height: 44px;
+    color: #60a5fa;
+    flex-shrink: 0;
+}
+
+.scanner-header-title {
+    color: #60a5fa;
+    font-weight: 900;
+    font-size: 42px;
+    line-height: 1;
+}
+
+.scanner-header-subtitle {
+    color: #94a3b8;
+    font-size: 24px;
+    font-weight: 500;
+}
+
+/* =========================================================================
+   States Container
+   ========================================================================= */
+
+.scanner-states {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.scanner-state {
+    display: none;
+    flex: 1;
+    flex-direction: column;
+}
+
+.scanner-state.active {
+    display: flex;
+}
+
+/* =========================================================================
+   WAITING State
+   ========================================================================= */
+
+.state-waiting {
+    align-items: center;
+    justify-content: center;
+}
+
+.state-waiting .icon {
+    width: 80px;
+    height: 80px;
+    color: #334155;
+    margin-bottom: 20px;
+}
+
+.state-waiting .label {
+    color: #475569;
+    font-size: 32px;
+    font-weight: 600;
+}
+
+/* =========================================================================
+   IDLE State
+   ========================================================================= */
+
+.status-bar {
+    background: #0c1929;
+    border: 2px solid #1e3a5f;
+    border-radius: 14px;
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    flex-shrink: 0;
+}
+
+.status-bar .label {
+    color: #60a5fa;
+    font-weight: 700;
+    font-size: 28px;
+}
+
+.status-bar .dot {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #3b82f6;
+    box-shadow: 0 0 16px #3b82f6;
+}
+
+.target-display {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.target-icon-circle {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    border: 4px solid #1e3a5f;
+    background: #0c1929;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.target-icon-circle svg {
+    width: 60px;
+    height: 60px;
+    color: #60a5fa;
+}
+
+.target-distance {
+    color: white;
+    font-weight: 900;
+    font-size: 72px;
+    margin-top: 16px;
+    text-shadow: 0 0 20px rgba(96, 165, 250, 0.3);
+}
+
+.target-hint {
+    color: #64748b;
+    font-size: 26px;
+    margin-top: 6px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+}
+
+.info-bar {
+    background: #0c1929;
+    border: 2px solid #1e3a5f;
+    border-radius: 14px;
+    padding: 14px 20px;
+    flex-shrink: 0;
+}
+
+.info-bar .type-label {
+    color: #94a3b8;
+    font-size: 22px;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.info-bar .type-value {
+    color: #60a5fa;
+    font-size: 32px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+}
+
+/* =========================================================================
+   SCANNING State
+   ========================================================================= */
+
+.state-scanning {
+    align-items: center;
+    justify-content: center;
+}
+
+.spinner-container {
+    position: relative;
+    width: 160px;
+    height: 160px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.spinner-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 5px solid transparent;
+    border-top-color: #60a5fa;
+    animation: spin 1.2s linear infinite;
+}
+
+.spinner-container .icon {
+    width: 50px;
+    height: 50px;
+    color: #60a5fa;
+}
+
+.scanning-label {
+    color: #60a5fa;
+    font-weight: 800;
+    font-size: 36px;
+    margin-top: 30px;
+    letter-spacing: 0.2em;
+}
+
+.progress-track {
+    width: 60%;
+    height: 10px;
+    border-radius: 999px;
+    background: #1e293b;
+    margin-top: 20px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: #3b82f6;
+    border-radius: 999px;
+    animation: progress 4s linear forwards;
+}
+
+/* Log de leitura de peças */
+.scanning-log {
+    width: 85%;
+    margin-top: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow: hidden;
+    max-height: 160px;
+}
+
+.scanning-log-line {
+    font-size: 20px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0;
+    animation: logFadeIn 0.35s ease forwards;
+}
+
+@keyframes logFadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* =========================================================================
+   RESULT State
+   ========================================================================= */
+
+.result-badge {
+    border-radius: 14px;
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-weight: 900;
+    font-size: 30px;
+    margin-bottom: 16px;
+    flex-shrink: 0;
+    border: 2px solid;
+}
+
+.result-badge.positive {
+    background: #1c0a0a;
+    color: #ff6b6b;
+    border-color: #5c1a1a;
+}
+
+.result-badge.negative {
+    background: #0a1c12;
+    color: #4bff7a;
+    border-color: #1a5c2a;
+}
+
+.result-badge svg {
+    width: 30px;
+    height: 30px;
+    flex-shrink: 0;
+}
+
+.result-rows {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 16px;
+}
+
+.result-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.result-row.bordered {
+    border-bottom: 1px solid #1e293b;
+    padding-bottom: 14px;
+}
+
+.result-row .row-label {
+    color: #64748b;
+    font-size: 28px;
+    font-weight: 800;
+}
+
+.result-row .row-value {
+    font-size: 30px;
+    font-weight: 800;
+}
+
+.result-row .row-value.white { color: white; }
+.result-row .row-value.blue { color: #60a5fa; }
+.result-row .row-value.red { color: #f87171; }
+.result-row .row-value.green { color: #4ade80; }
+
+.result-pill {
+    padding: 6px 16px;
+    border-radius: 10px;
+    font-weight: 800;
+    font-size: 26px;
+    color: white;
+}
+
+.result-pill.danger { background: #dc2626; }
+.result-pill.success { background: #16a34a; }
+
+.result-error {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.result-error .icon {
+    width: 70px;
+    height: 70px;
+    color: #f87171;
+    margin-bottom: 20px;
+}
+
+.result-error .error-title {
+    color: #f87171;
+    font-weight: 900;
+    font-size: 36px;
+}
+
+.result-error .error-msg {
+    color: #94a3b8;
+    font-size: 28px;
+    text-align: center;
+    margin-top: 10px;
+}
+
+/* =========================================================================
+   Action Buttons
+   ========================================================================= */
+
+.action-buttons {
+    display: flex;
+    gap: 14px;
+    flex-shrink: 0;
+    margin-top: 16px;
+}
+
+.btn {
+    flex: 1;
+    font-weight: 800;
+    padding: 14px 0;
+    font-size: 28px;
+    border-radius: 12px;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    font-family: inherit;
+}
+
+.btn-close { background: #dc2626; color: white; }
+.btn-new { background: #0c1929; color: #60a5fa; border: 2px solid #1e3a5f; }
+
+.btn-new svg {
+    width: 22px;
+    height: 22px;
+}
+
+/* =========================================================================
+   Animations
+   ========================================================================= */
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+@keyframes progress {
+    from { width: 0%; }
+    to { width: 100%; }
+}
+
+/* =========================================================================
+   OBD-II DASHBOARD
+   ========================================================================= */
+
+.obd-dashboard {
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+    background: rgba(10, 20, 40, 0.4);
+    border-radius: 12px;
+    margin-top: 5px;
+}
+
+.obd-title {
+    font-size: 14px;
+    color: #f59e0b; /* Amber OBD look */
+    font-weight: 900;
+    margin-bottom: 12px;
+    letter-spacing: 0.1em;
+    border-bottom: 2px solid rgba(245, 158, 11, 0.3);
+    padding-bottom: 5px;
+    text-align: center;
+}
+
+.obd-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.obd-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.obd-label {
+    font-size: 11px;
+    color: #94a3b8;
+    margin-bottom: 4px;
+    font-weight: 800;
+}
+
+.obd-bar-bg {
+    width: 100%;
+    height: 8px;
+    background: #1e293b;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.obd-bar-fill {
+    height: 100%;
+    background: #3b82f6; /* Blue by default */
+    transition: width 1s ease-out;
+}
+
+.obd-bar-fill.danger {
+    background: #ef4444;
+}
+
+.obd-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    color: #fff;
+    font-weight: 900;
+}
+
+.obd-footer {
+    display: flex;
+    justify-content: space-around;
+    padding: 10px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    margin-bottom: 10px;
+}
+
+.obd-stat {
+    text-align: center;
+}
+
+.obd-stat .label {
+    font-size: 10px;
+    color: #64748b;
+    display: block;
+}
+
+.obd-stat .val {
+    font-size: 18px;
+    color: #4ade80;
+    font-weight: 900;
+}
+
+.obd-stat .val span {
+    font-size: 10px;
+    color: #94a3b8;
+}
+
+.plate-row {
+    background: rgba(59, 130, 246, 0.1);
+    padding: 8px 15px;
+    border-radius: 8px;
+    border-left: 4px solid #3b82f6;
+}
+
+#settings-trigger {
+    transition: all 0.2s;
+    z-index: 1000;
+}
+#settings-trigger:hover { 
+    opacity: 1 !important;
+    transform: scale(1.2);
+}
+
+#debug-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    background: #050a14;
+    z-index: 9999;
+    flex-direction: column;
+    padding: 15px;
+    font-family: 'Inter', sans-serif;
+    animation: fadeIn 0.3s ease;
+}
+
+.debug-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 3px solid #1e3a5f;
+    padding-bottom: 10px;
+    margin-bottom: 20px;
+}
+
+.debug-header h3 {
+    font-size: 28px;
+    font-weight: 900;
+    color: #60a5fa;
+    letter-spacing: 0.15em;
+}
+
+.debug-slider-row {
+    background: #0c1929;
+    padding: 15px;
+    border-radius: 12px;
+    border: 1px solid #1e3a5f;
+    margin-bottom: 12px;
+}
+
+.debug-slider-row label {
+    display: block;
+    font-size: 24px;
+    color: #94a3b8;
+    font-weight: 700;
+    margin-bottom: 10px;
+}
+
+/* Trilhas Táteis Largas GIGANTES */
+.debug-slider-row::after {
+    content: '';
+    display: block;
+    width: 100%;
+    height: 35px;
+    background: #112233;
+    border-radius: 8px;
+    border: 2px solid #3b82f6;
+    box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
+}
+
+.slider-value {
+    font-size: 28px;
+    color: #4ade80; /* Verde neon para os números */
+    font-weight: 900;
+    float: right;
+}
+
+.debug-section-title {
+    font-size: 20px;
+    color: #64748b;
+    font-weight: 900;
+    margin-bottom: 15px;
+    text-transform: uppercase;
+    display: block;
+}
+
+#debug-overlay.visible {
+    display: flex;
+    flex-direction: column;
+}
+
+.debug-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    background: #111;
+}
+
+.debug-header h3 {
+    font-size: 13px;
+    font-weight: 900;
+    color: #60a5fa;
+    letter-spacing: 0.1em;
+}
+
+.debug-close-btn {
+    background: none;
+    border: none;
+    color: #f87171;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 6px;
+    font-size: 18px;
+    line-height: 1;
+}
+
+.debug-close-btn:hover {
+    background: rgba(248, 113, 113, 0.15);
+}
+
+.debug-body {
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.debug-section-title {
+    font-size: 10px;
+    font-weight: 700;
+    color: #64748b;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 2px;
+}
+
+.debug-slider-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.debug-slider-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.debug-slider-row label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #94a3b8;
+    min-width: 75px;
+}
+
+.debug-slider-row input[type="range"] {
+    flex: 1;
+    accent-color: #60a5fa;
+    height: 6px;
+}
+
+.debug-slider-row .slider-value {
+    font-size: 12px;
+    font-weight: 800;
+    color: #60a5fa;
+    min-width: 48px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Toggle buttons */
+.debug-toggle-group {
+    display: flex;
+    gap: 8px;
+}
+
+.debug-toggle {
+    flex: 1;
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 2px solid #1e3a5f;
+    background: #0c1929;
+    color: #60a5fa;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+    text-align: center;
+}
+
+.debug-toggle:hover {
+    background: #132d4b;
+    border-color: #3b82f6;
+}
+
+.debug-toggle.active {
+    background: #1e3a5f;
+    border-color: #60a5fa;
+    color: white;
+}
+
+/* State simulation buttons */
+.debug-state-btn {
+    width: 100%;
+    padding: 9px 14px;
+    border-radius: 10px;
+    border: 1px solid;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+    transition: all 0.15s;
+}
+
+.debug-state-btn.blue {
+    background: rgba(96, 165, 250, 0.1);
+    color: #60a5fa;
+    border-color: rgba(96, 165, 250, 0.25);
+}
+.debug-state-btn.blue:hover { background: rgba(96, 165, 250, 0.2); }
+
+.debug-state-btn.yellow {
+    background: rgba(250, 204, 21, 0.1);
+    color: #facc15;
+    border-color: rgba(250, 204, 21, 0.25);
+}
+.debug-state-btn.yellow:hover { background: rgba(250, 204, 21, 0.2); }
+
+.debug-state-btn.green {
+    background: rgba(74, 222, 128, 0.1);
+    color: #4ade80;
+    border-color: rgba(74, 222, 128, 0.25);
+}
+.debug-state-btn.green:hover { background: rgba(74, 222, 128, 0.2); }
+
+.debug-state-btn.red {
+    background: rgba(248, 113, 113, 0.1);
+    color: #f87171;
+    border-color: rgba(248, 113, 113, 0.25);
+}
+.debug-state-btn.red:hover { background: rgba(248, 113, 113, 0.2); }
+
+.debug-state-btn.gray {
+    background: rgba(148, 163, 184, 0.08);
+    color: #94a3b8;
+    border-color: rgba(148, 163, 184, 0.2);
+}
+.debug-state-btn.gray:hover { background: rgba(148, 163, 184, 0.15); }
+
+/* Copy config button */
+.debug-copy-btn {
+    width: 100%;
+    padding: 12px;
+    border-radius: 12px;
+    border: 2px solid #1e3a5f;
+    background: linear-gradient(135deg, #0c1929, #132d4b);
+    color: #60a5fa;
+    font-size: 13px;
+    font-weight: 800;
+    cursor: pointer;
+    font-family: inherit;
+    letter-spacing: 0.05em;
+    transition: all 0.2s;
+}
+
+.debug-copy-btn:hover {
+    border-color: #3b82f6;
+    background: linear-gradient(135deg, #132d4b, #1e3a5f);
+}
+
+.debug-copy-btn.copied {
+    border-color: #4ade80;
+    color: #4ade80;
+}
+
+/* Config output */
+.debug-config-output {
+    background: #111;
+    border: 1px solid #2a2a2a;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 11px;
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    color: #94a3b8;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 120px;
+    overflow-y: auto;
+}
+
+.debug-state-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.debug-divider {
+    border: none;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    margin: 4px 0;
+}
+
+/* =========================================================================
+   IDLE — lista resumida de peças
+   ========================================================================= */
+
+.idle-parts-list {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.idle-part-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 10px;
+    background: #0c1929;
+    border-radius: 8px;
+    border-left: 3px solid #1e3a5f;
+}
+
+.idle-part-label {
+    color: #94a3b8;
+    font-size: 20px;
+    font-weight: 600;
+}
+
+.idle-part-pct {
+    font-size: 20px;
+    font-weight: 900;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.idle-part-pct.ok     { color: #4ade80; }
+.idle-part-pct.warn   { color: #facc15; }
+.idle-part-pct.danger { color: #f87171; }
+
+.idle-no-parts {
+    color: #475569;
+    font-size: 22px;
+    text-align: center;
+    margin-top: 20px;
+}
+
+/* =========================================================================
+   PARTS — status detalhado com barra
+   ========================================================================= */
+
+.parts-list {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+
+.parts-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.parts-row-label {
+    color: #94a3b8;
+    font-size: 20px;
+    font-weight: 700;
+}
+
+.parts-row-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.parts-bar-fill {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 18px;
+    letter-spacing: -1px;
+    flex: 1;
+}
+
+.parts-bar-pct {
+    font-size: 20px;
+    font-weight: 900;
+    font-family: 'JetBrains Mono', monospace;
+    min-width: 46px;
+    text-align: right;
+}
+
+.parts-bar-fill.ok,  .parts-bar-pct.ok   { color: #4ade80; }
+.parts-bar-fill.warn, .parts-bar-pct.warn { color: #facc15; }
+.parts-bar-fill.danger, .parts-bar-pct.danger { color: #f87171; }
+
+.parts-scroll-indicator {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 2px;
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 6px;
+    border-top: 1px solid #1e293b;
+    padding-top: 8px;
+}
+
+.parts-scroll-indicator .active { color: #60a5fa; }
+.parts-scroll-indicator .dim    { color: #1e293b; }
+
+/* =========================================================================
+   KEY HINTS — rodapé com atalhos de teclado
+   ========================================================================= */
+
+.key-hints {
+    display: flex;
+    justify-content: space-around;
+    flex-shrink: 0;
+    padding-top: 8px;
+    border-top: 1px solid #1e293b;
+}
+
+.key-hints span {
+    color: #334155;
+    font-size: 17px;
+    font-weight: 600;
+}
