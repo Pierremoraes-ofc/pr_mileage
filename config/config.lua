@@ -1,4 +1,7 @@
 Config = {}
+-- Avanco maximo aceito por sincronizacao do cliente (km).
+Config.MaxSyncAdvance = Config.MaxSyncAdvance or 10.0
+
 
 -- Framework detectado automaticamente pelo Fivem_bridge
 -- Config.Framework foi removido — não é mais necessário configurar
@@ -14,7 +17,7 @@ Config.AutoRunSQL = true
 Config.Debug = false
 
 --  Executa a verificação de novas versões do script "não baixa, ele apenas avisa!"
-Config.Version = false
+Config.VersionCheck = false
 
 -- A cada quantos KM (ou milhas) salva no banco enquanto rodando
 Config.SaveThreshold = 1.0

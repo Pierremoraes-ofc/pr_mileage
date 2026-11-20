@@ -1,9 +1,9 @@
 # pr\_mileage
 
-[![fivem_bridge](https://img.shields.io/badge/⚡_fivem__bridge-Standalone-green?style=for-the-badge)](https://github.com/Pierremoraes-ofc/Fivem_bridge)
+[![pr_bridge](https://img.shields.io/badge/⚡_fivem__bridge-Standalone-green?style=for-the-badge)](https://github.com/Pierremoraes-ofc/pr_bridge)
 [![GitBook](https://img.shields.io/badge/📖_Documentação-GitBook-blue?style=for-the-badge)](https://pierremoraes.gitbook.io/home/fivem/pr-mileage)
 
-Sistema completo de **quilometragem** e **desgaste de peças** para servidores FiveM, totalmente **standalone** graças ao [fivem_bridge](https://github.com/Pierremoraes-ofc/Fivem_bridge).
+Sistema completo de **quilometragem** e **desgaste de peças** para servidores FiveM, totalmente **standalone** graças ao [pr_bridge](https://github.com/Pierremoraes-ofc/pr_bridge).
 
 ---
 
@@ -17,7 +17,7 @@ O sistema foi construído para ser **modular e extensível**: qualquer script ex
 
 ## Compatibilidade
 
-O `pr_mileage` é **totalmente standalone** graças ao [fivem_bridge](https://github.com/Pierremoraes-ofc/Fivem_bridge), que abstrai automaticamente o framework ativo no servidor. Não é necessário nenhuma configuração adicional — basta o `fivem_bridge` estar instalado e iniciado antes do `pr_mileage`.
+O `pr_mileage` é **totalmente standalone** graças ao [pr_bridge](https://github.com/Pierremoraes-ofc/pr_bridge), que abstrai automaticamente o framework ativo no servidor. Não é necessário nenhuma configuração adicional — basta o `pr_bridge` estar instalado e iniciado antes do `pr_mileage`.
 
 | Framework | Tabela de veículos usada | Detectado automaticamente |
 |-----------|--------------------------|--------------------------|
@@ -27,7 +27,7 @@ O `pr_mileage` é **totalmente standalone** graças ao [fivem_bridge](https://gi
 | ox_core   | `player_vehicles`        | ✅ |
 | NDCore    | `player_vehicles`        | ✅ |
 
-**Dependências obrigatórias:** `oxmysql` · `ox_lib` · [`fivem_bridge`](https://github.com/Pierremoraes-ofc/Fivem_bridge)
+**Dependência obrigatória:** `pr_bridge`. O driver SQL e as interfaces são selecionados indiretamente pelo bridge.
 
 ---
 
@@ -35,11 +35,7 @@ O `pr_mileage` é **totalmente standalone** graças ao [fivem_bridge](https://gi
 
 ### 1. Instale as dependências
 
-Certifique-se de que os seguintes recursos estão instalados e funcionando no seu servidor:
-
-- [`oxmysql`](https://github.com/overextended/oxmysql)
-- [`ox_lib`](https://github.com/overextended/ox_lib)
-- [`fivem_bridge`](https://github.com/Pierremoraes-ofc/Fivem_bridge) — responsável por tornar o script standalone
+Certifique-se de que o `pr_bridge` está instalado e iniciado antes deste recurso. Ele seleciona o framework, o inventário, a interface e o driver SQL.
 
 ### 2. Copie a pasta
 
@@ -53,24 +49,22 @@ Execute o arquivo do seu framework em `/install/qb.sql` ou `/install/esx.sql`. O
 
 A ordem de inicialização é importante:
 
-```
-ensure oxmysql
-ensure ox_lib
-ensure fivem_bridge
+```cfg
+ensure pr_bridge
 ensure pr_mileage
 ```
 
 > Se preferir executar o SQL manualmente, defina `Config.AutoRunSQL = false` em `config/config.lua`.
 
-### Como o fivem_bridge é integrado
+### Como o pr_bridge é integrado
 
 O `pr_mileage` importa o bridge diretamente pelo `fxmanifest.lua`:
 
 ```lua
 shared_scripts {
     "@ox_lib/init.lua",
-    "@fivem_bridge/bridge/config.lua",
-    "@fivem_bridge/bridge/init.lua",
+    "@pr_bridge/bridge/config.lua",
+    "@pr_bridge/bridge/init.lua",
     "config/config.lua",
     "config/parts_consumable.lua",
     "config/parts_wear.lua",
@@ -538,6 +532,32 @@ end)
 exports["pr_mileage"]:clearExternalParts()
 ```
 
+#### Dano físico em pneus (client-side)
+
+```lua
+-- Recebe o handle local do veículo, não o network ID.
+-- Funciona mesmo se o jogador estiver a pé.
+local applied, reason = exports["pr_mileage"]:burstTyre(vehicle, tyreIndex)
+```
+
+Retorna `true` quando o pneu está furado (inclusive se já estava), ou `false`
+e um motivo: `invalid_vehicle`, `invalid_tyre`, `owner_changed`, `burst_disabled`
+ou `sync_failed`. Aceita índices inteiros 0–7 e 45–48. Aplica apenas ao pneu
+informado, sem remover a borracha (`onRim = false`).
+
+Em veículos de rede, execute no cliente que **já possui controle** da entidade.
+O export não solicita/rouba controle. O chamador deve validar a ação no servidor
+(arma, distância, tempo e permissões), como faz o `forge-smallresources`.
+Não há evento de rede novo que aplique dano sem essas validações.
+
+Entrar/sair do veículo e limpar sintomas de desgaste não reparam pneus. A
+confirmação de instalação de pneus novos em `cl_parts.lua` mantém o reparo.
+Esta API não modifica quilometragem, peças instaladas ou banco de dados, nem
+implementa persistência da perfuração entre despawn/respawn do veículo.
+
+Referências: [dano](https://github.com/citizenfx/natives/blob/master/VEHICLE/SetVehicleTyreBurst.md)
+e [reparo](https://github.com/citizenfx/natives/blob/master/VEHICLE/SetVehicleTyreFixed.md) da Cfx.
+
 #### Motor de efeitos
 
 ```lua
@@ -681,9 +701,9 @@ Hooks automáticos já existem para: `esx_garages`, `esx:vehicleBought`, `QBCore
 
 ---
 
-## fivem_bridge — Como funciona a integração
+## pr_bridge — Como funciona a integração
 
-O [fivem_bridge](https://github.com/Pierremoraes-ofc/Fivem_bridge) é uma biblioteca leve que abstrai a API de múltiplos frameworks, inventários, notificações e outros sistemas em uma interface unificada. Ao integrá-lo ao `pr_mileage`, o script deixa de ter dependência direta de qualquer framework específico.
+O [pr_bridge](https://github.com/Pierremoraes-ofc/pr_bridge) é uma biblioteca leve que abstrai a API de múltiplos frameworks, inventários, notificações e outros sistemas em uma interface unificada. Ao integrá-lo ao `pr_mileage`, o script deixa de ter dependência direta de qualquer framework específico.
 
 ### O que o bridge resolve no pr_mileage
 
@@ -712,19 +732,19 @@ Se você quer criar um script que interaja com o `pr_mileage` e também seja sta
 
 ```lua
 -- fxmanifest.lua do seu script
-dependency 'fivem_bridge'
+dependency 'pr_bridge'
 
 shared_scripts {
     '@ox_lib/init.lua',
-    '@fivem_bridge/bridge/config.lua',
-    '@fivem_bridge/bridge/init.lua',
+    '@pr_bridge/bridge/config.lua',
+    '@pr_bridge/bridge/init.lua',
     -- seus arquivos de config aqui
 }
 ```
 
 A partir daí, `Bridge` estará disponível globalmente e você pode usar qualquer função — notificações, inventário, framework — sem se preocupar com qual sistema o servidor usa.
 
-### Recursos suportados pelo fivem_bridge
+### Recursos suportados pelo pr_bridge
 
 | Categoria | Recursos suportados |
 |-----------|-------------------|
@@ -743,7 +763,7 @@ A partir daí, `Bridge` estará disponível globalmente e você pode usar qualqu
 
 | Recurso | Link |
 |---------|------|
-| fivem_bridge (standalone) | [github.com/Pierremoraes-ofc/Fivem_bridge](https://github.com/Pierremoraes-ofc/Fivem_bridge) |
+| pr_bridge (standalone) | [github.com/Pierremoraes-ofc/pr_bridge](https://github.com/Pierremoraes-ofc/pr_bridge) |
 | Lista de partículas (ptfx) | [ptfx.dev](https://ptfx.dev) |
 | NativeDB GTA V | [nativedb.dotindustries.dev](https://nativedb.dotindustries.dev) |
 | Campos de handling | [gtamods.com/wiki/Handling.dat](https://gtamods.com/wiki/Handling.dat) |

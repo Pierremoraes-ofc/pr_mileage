@@ -1,6 +1,7 @@
 -- ============================================================
 --   pr_mileage — Auto SQL
 -- ============================================================
+local Database = pr_lib.database
 local function quoteIdentifier(identifier)
     if type(identifier) ~= "string" or not identifier:match("^[%w_]+$") then
         error(("Identificador SQL invalido: %s"):format(tostring(identifier)))
@@ -10,7 +11,7 @@ local function quoteIdentifier(identifier)
 end
 
 local function scalarNumber(query, params)
-    local value = MySQL.scalar.await(query, params)
+    local value = Database.scalar(query, params)
     return tonumber(value or 0) or 0
 end
 
@@ -37,7 +38,7 @@ end
 local function addColumnIfMissing(tableName, columnName, definition)
     if columnExists(tableName, columnName) then return end
 
-    MySQL.query.await(("ALTER TABLE %s ADD COLUMN %s"):format(
+    Database.query(("ALTER TABLE %s ADD COLUMN %s"):format(
         quoteIdentifier(tableName),
         definition
     ))
@@ -46,7 +47,7 @@ end
 local function addIndexIfMissing(tableName, indexName, definition)
     if indexExists(tableName, indexName) then return end
 
-    MySQL.query.await(("ALTER TABLE %s ADD %s"):format(
+    Database.query(("ALTER TABLE %s ADD %s"):format(
         quoteIdentifier(tableName),
         definition
     ))
@@ -58,7 +59,7 @@ local function ensureMileageColumn()
 end
 
 local function ensureVehiclePartsTable()
-    MySQL.query.await([[
+    Database.query([[
         CREATE TABLE IF NOT EXISTS `vehicle_parts` (
             `id`              INT UNSIGNED NOT NULL AUTO_INCREMENT,
             `plate`           VARCHAR(10)  NOT NULL COMMENT 'Placa do veiculo',
@@ -84,7 +85,7 @@ local function ensureVehiclePartsTable()
     addColumnIfMissing("vehicle_parts", "installed_at", "`installed_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP")
     addColumnIfMissing("vehicle_parts", "updated_at", "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP")
 
-    MySQL.query.await([[
+    Database.query([[
         ALTER TABLE `vehicle_parts`
             MODIFY COLUMN `installed_km` INT UNSIGNED NOT NULL DEFAULT 0,
             MODIFY COLUMN `durability` INT UNSIGNED NOT NULL DEFAULT 0
@@ -119,9 +120,6 @@ end
 
 local KM_TO_MILES = 0.621371
 
--- Tabela em memória: plate → km (carros da rua — sem dono no banco)
-local worldVehicles = {}
-
 -- ============================================================
 --   UTILITÁRIOS INTERNOS
 -- ============================================================
@@ -131,66 +129,108 @@ local function convertUnit(km)
     return km
 end
 
-local function sanitizePlate(plate)
-    if not plate or plate == "" then return false end
-    return plate:gsub("%s+", ""):upper()
+local sanitizePlate = PRMileageSanitizePlate
+
+local function resolveIdentity(plate)
+    return PRMileageResolvePlate(plate)
 end
 
 local function isOwnedVehicle(plate)
-    local result = MySQL.scalar.await(
-        "SELECT 1 FROM " .. Framework.VehiclesTable .. " WHERE plate = ? LIMIT 1",
-        { plate }
-    )
-    return result ~= nil
+    local identity = resolveIdentity(plate)
+    return identity ~= nil and identity.owned == true
 end
 
 local function fetchFromDB(plate)
-    local result = MySQL.scalar.await(
-        "SELECT mileage FROM " .. Framework.VehiclesTable .. " WHERE plate = ?",
-        { plate }
+    local result = Database.scalar(
+        "SELECT mileage FROM " .. Framework.VehiclesTable ..
+        " WHERE UPPER(REPLACE(plate, ' ', '')) = ? LIMIT 1",
+        { sanitizePlate(plate) }
     )
     if result == nil then return -1 end
-    return result or 0.0
+    return tonumber(result) or 0.0
 end
 
-local function fetchFromRAM(plate)
-    if worldVehicles[plate] == nil then return -1 end
-    return worldVehicles[plate]
-end
-
-local function resolveMileage(plate)
+local function findVehicleByPlate(plate)
     plate = sanitizePlate(plate)
-    if not plate then return false end
+    if not plate then return nil end
 
-    local dbKm = fetchFromDB(plate)
-    if dbKm ~= -1 then return dbKm, "db" end
+    for _, vehicle in ipairs(GetAllVehicles()) do
+        if DoesEntityExist(vehicle) and GetEntityType(vehicle) == 2 then
+            local displayed = sanitizePlate(GetVehicleNumberPlateText(vehicle))
+            local identity = PRMileageIdentityGet(vehicle)
+            local original = type(identity) == "table" and sanitizePlate(identity.plate) or nil
+            if displayed == plate or original == plate then return vehicle end
+        end
+    end
+end
 
-    local ramKm = fetchFromRAM(plate)
-    if ramKm ~= -1 then return ramKm, "ram" end
+local function resolveMileage(plate, vehicle)
+    local identity = resolveIdentity(plate)
+    if not identity then return false end
 
-    return -1, nil
+    if identity.owned then
+        local dbKm = fetchFromDB(identity.plate)
+        if dbKm ~= -1 then return dbKm, "db", identity end
+    end
+
+    vehicle = vehicle or findVehicleByPlate(identity.plate)
+    local stateKm = vehicle and PRMileageGet(vehicle)
+    if stateKm ~= nil then return stateKm, "state", identity end
+
+    return -1, nil, identity
 end
 
 -- UPDATE condicional — anti-regressão no SQL, sem query de leitura prévia
 local function writeToDB(plate, value)
-    MySQL.update.await(
+    Database.update(
         "UPDATE " .. Framework.VehiclesTable ..
-        " SET mileage = ? WHERE plate = ? AND (mileage IS NULL OR mileage < ?)",
-        { value, plate, value }
+        " SET mileage = ? WHERE UPPER(REPLACE(plate, ' ', '')) = ? AND (mileage IS NULL OR mileage < ?)",
+        { value, sanitizePlate(plate), value }
     )
 end
 
-local function writeToRAM(plate, value)
-    worldVehicles[plate] = value
+local function forceWriteToDB(plate, value)
+    Database.update(
+        "UPDATE " .. Framework.VehiclesTable ..
+        " SET mileage = ? WHERE UPPER(REPLACE(plate, ' ', '')) = ?",
+        { value, sanitizePlate(plate) }
+    )
 end
 
 -- ============================================================
 --   CALLBACK — busca mileage (client chama ao entrar no veículo)
+local function validMileage(value)
+    value = tonumber(value)
+    if not value or value ~= value or value < 0.0 or value > 1000000000.0 then return nil end
+    return value
+end
+
+local function publishMileage(sourceId, vehicle, mileage, owned)
+    PRMileageSet(vehicle, mileage, true, { force = true })
+    TriggerClientEvent(
+        "pr_mileage:cl:authoritativeMileage",
+        sourceId,
+        NetworkGetNetworkIdFromEntity(vehicle),
+        mileage,
+        owned == true
+    )
+end
+
 -- ============================================================
 
-lib.callback.register("pr_mileage:cb:getMileage", function(_, plate)
-    local km, source = resolveMileage(plate)
-    return km, source
+pr_lib.callback.register("pr_mileage:cb:getMileage", function(sourceId, plate, netId)
+    local identity
+    if netId then
+        local vehicle
+        vehicle, identity = PRMileageResolveVehicle(sourceId, netId, plate, false)
+        if not vehicle or not identity then return false, nil end
+    else
+        identity = resolveIdentity(plate)
+        if not identity then return false, nil end
+    end
+
+    local km, storage = resolveMileage(identity.plate, vehicle)
+    return km, storage, identity.plate, identity
 end)
 
 -- ============================================================
@@ -198,25 +238,51 @@ end)
 -- ============================================================
 
 RegisterNetEvent("pr_mileage:sv:saveMileage")
-AddEventHandler("pr_mileage:sv:saveMileage", function(plate, mileage, isFresh, isOwned)
+AddEventHandler("pr_mileage:sv:saveMileage", function(plate, mileage, isFresh, netId, vehicleClass)
+    local sourceId = source
     if not plate or plate == "" then return end
     plate = sanitizePlate(plate)
+    mileage = validMileage(mileage)
+    if not plate or not mileage then return end
+
+    local vehicle, identity = PRMileageResolveVehicle(sourceId, netId, plate, false)
+    if not vehicle or not identity then return end
+
+    plate = identity.plate
+    local current, storage = resolveMileage(plate, vehicle)
+    local owned = identity.owned == true
 
     if isFresh then
-        if isOwnedVehicle(plate) then
-            writeToDB(plate, 0.0)
+        if current == -1 then
+            current = 0.0
+            if owned then writeToDB(plate, current) end
         end
-        worldVehicles[plate] = nil
+        publishMileage(sourceId, vehicle, current, owned)
         return
     end
 
-    if isOwned then
-        writeToDB(plate, mileage)
-    else
-        local current = worldVehicles[plate]
-        if current and mileage <= current then return end
-        writeToRAM(plate, mileage)
+    vehicleClass = tonumber(vehicleClass)
+    if vehicleClass then vehicleClass = math.floor(vehicleClass) end
+    if not vehicleClass or vehicleClass < 0 or vehicleClass > 22 then return end
+
+    if current == -1 then
+        local range = Config.ClassKmRange[vehicleClass]
+        local maximumInitial = range and tonumber(range[2]) or 0.0
+        if mileage > maximumInitial + (tonumber(Config.MaxSyncAdvance) or 10.0) then return end
     end
+
+    if current ~= -1 then
+        if mileage < current then
+            publishMileage(sourceId, vehicle, current, owned)
+            return
+        end
+        if mileage - current > (tonumber(Config.MaxSyncAdvance) or 10.0) then return end
+    end
+
+    if owned then
+        writeToDB(plate, mileage)
+    end
+    publishMileage(sourceId, vehicle, mileage, owned)
 end)
 
 -- ============================================================
@@ -232,7 +298,7 @@ end)
 exports("getMileageByEntity", function(ent)
     if not ent or ent == 0 then return false end
     if not DoesEntityExist(ent) then return false end
-    local km = Entity(ent).state.vehicleMileage
+    local km = PRMileageGet(ent)
     if not km then return false end
     return convertUnit(km)
 end)
@@ -268,10 +334,12 @@ end)
 exports("resetMileage", function(plate)
     plate = sanitizePlate(plate)
     if not plate then return end
-    if isOwnedVehicle(plate) then
-        writeToDB(plate, 0.0)
+    local identity = resolveIdentity(plate)
+    if identity and identity.owned then
+        forceWriteToDB(identity.plate, 0.0)
     else
-        writeToRAM(plate, 0.0)
+        local vehicle = findVehicleByPlate(identity and identity.plate or plate)
+        if vehicle then PRMileageSet(vehicle, 0.0, true, { force = true }) end
     end
 end)
 
@@ -279,16 +347,18 @@ exports("setMileage", function(plate, value)
     plate = sanitizePlate(plate)
     if not plate or type(value) ~= "number" then return end
     local km = Config.Unit == "miles" and (value / KM_TO_MILES) or value
-    if isOwnedVehicle(plate) then
-        writeToDB(plate, km)
+    local identity = resolveIdentity(plate)
+    if identity and identity.owned then
+        forceWriteToDB(identity.plate, km)
     else
-        writeToRAM(plate, km)
+        local vehicle = findVehicleByPlate(identity and identity.plate or plate)
+        if vehicle then PRMileageSet(vehicle, km, true, { force = true }) end
     end
 end)
 
 exports("getTopMileage", function(limit)
     limit = limit or 10
-    local rows = MySQL.query.await(
+    local rows = Database.query(
         "SELECT plate, mileage FROM " .. Framework.VehiclesTable ..
         " WHERE mileage > 0 ORDER BY mileage DESC LIMIT ?",
         { limit }
@@ -303,36 +373,10 @@ end)
 -- Aceita source (player online) ou identifier string (lookup offline)
 -- Resolve o identifier diretamente pelo framework detectado no main.lua
 exports("getPlayerVehiclesMileage", function(src)
-    local identifier
-    if type(src) == "number" then
-        -- Resolve o identifier do player pelo framework ativo
-        -- Replica a lógica do Bridge.framework.GetIdentifier sem depender de globals externas
-        local res = Framework.ActiveResource
-        if res == "qb-core" then
-            local QBCore = exports["qb-core"]:GetCoreObject()
-            local player = QBCore.Functions.GetPlayer(src)
-            identifier = player and player.PlayerData.citizenid or nil
-        elseif res == "qbx-core" then
-            local player = exports["qbx-core"]:GetPlayer(src)
-            identifier = player and player.PlayerData.citizenid or nil
-        elseif res == "es_extended" then
-            local ESX = exports["es_extended"]:getSharedObject()
-            local xPlayer = ESX.GetPlayerFromId(src)
-            identifier = xPlayer and xPlayer.getIdentifier() or nil
-        elseif res == "ox_core" then
-            local Ox = exports["ox_core"]
-            local player = Ox:GetPlayer(src)
-            identifier = player and player.charId or nil
-        else
-            -- ND Core ou fallback — tenta pegar license
-            identifier = GetPlayerIdentifierByType(tostring(src), "license")
-        end
-    else
-        identifier = src
-    end
+    local identifier = type(src) == "number" and pr_lib.framework.GetIdentifier(src) or src
     if not identifier or identifier == "" then return {} end
 
-    local rows = MySQL.query.await(
+    local rows = Database.query(
         "SELECT plate, mileage FROM " .. Framework.VehiclesTable ..
         " WHERE " .. Framework.OwnerColumn .. " = ? ORDER BY mileage DESC",
         { identifier }
@@ -346,8 +390,15 @@ end)
 
 exports("getWorldVehicles", function()
     local result = {}
-    for plate, km in pairs(worldVehicles) do
-        result[plate] = convertUnit(km)
+    for _, vehicle in ipairs(GetAllVehicles()) do
+        if DoesEntityExist(vehicle) and GetEntityType(vehicle) == 2 then
+            local identity = PRMileageIdentityGet(vehicle)
+            if type(identity) ~= "table" or identity.owned ~= true then
+                local plate = sanitizePlate(GetVehicleNumberPlateText(vehicle))
+                local km = PRMileageGet(vehicle)
+                if plate and km ~= nil then result[plate] = convertUnit(km) end
+            end
+        end
     end
     return result
 end)
@@ -378,13 +429,11 @@ local function saveOffsetsToFile(data)
 end
 
 -- Registro da Callback
-if lib and lib.callback then
-    lib.callback.register('pr_mileage:getSavedData', function(source)
-        return loadSavedOffsets()
-    end)
-    if Config.Debug then
-        print("^2[pr_mileage] Callback 'getSavedData' registrada com sucesso!^7")
-    end
+pr_lib.callback.register('pr_mileage:getSavedData', function(source)
+    return loadSavedOffsets()
+end)
+if Config.Debug then
+    print("^2[pr_mileage] Callback 'getSavedData' registrada com sucesso!^7")
 end
 
 
@@ -489,7 +538,7 @@ RegisterNetEvent('pr_mileage:startScan', function(targetData)
 end)
 
 -- Comando principal /adjust
-lib.addCommand(Config.command, {
+pr_lib.addCommand(Config.command, {
     help = 'Inicia o modo de ajuste de animação',
     restricted = Config.adminOnly and Config.acePermission or nil
 }, function(source, args, raw)

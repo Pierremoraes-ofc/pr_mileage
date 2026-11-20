@@ -1,273 +1,215 @@
 -- ============================================================
 --   pr_mileage — SERVER: PEÇAS INSTALADAS
+--   Banco: placa original | Entidade: state bag do PR Bridge
 -- ============================================================
+local Database = pr_lib.database
 
 local function randomInRange(min, max)
     return min + math.random() * (max - min)
 end
 
-local function sanitizePlate(plate)
-    if not plate or plate == "" then return false end
-    return plate:gsub("%s+", ""):upper()
-end
-
--- Calcula quilômetros rodados pela peça — sempre inteiro (math.floor)
--- installedKm e vehicleKm chegam do banco como INT, mas garantimos floor aqui também
 local function calcCurrentKm(installedKm, vehicleKm)
-    local driven = math.floor(vehicleKm) - math.floor(installedKm)
+    local driven = math.floor(tonumber(vehicleKm) or 0) - math.floor(tonumber(installedKm) or 0)
     return driven > 0 and driven or 0
 end
 
--- Calcula % restante (0.0–1.0)
 local function calcPercent(currentKm, durability)
+    durability = tonumber(durability) or 0
     if durability <= 0 then return 0.0 end
-    local remaining = durability - currentKm
-    if remaining < 0 then remaining = 0 end
-    return remaining / durability
+    return math.max(0, durability - currentKm) / durability
 end
 
--- Resolve label de status a partir do percent
 local function resolveStatus(percent)
     if percent >= WearConfig.StatusThresholds.good then
         return WearConfig.StatusLabels.good
     elseif percent >= WearConfig.StatusThresholds.fair then
         return WearConfig.StatusLabels.fair
-    else
-        return WearConfig.StatusLabels.bad
     end
+    return WearConfig.StatusLabels.bad
 end
 
--- Monta tabela de info completa de uma row do banco + km atual do veículo
 local function buildPartInfo(row, vehicleKm)
-    local currentKm  = calcCurrentKm(row.installed_km, vehicleKm)
-    local percent    = calcPercent(currentKm, row.durability)
-    local remaining  = row.durability - currentKm
-    if remaining < 0 then remaining = 0.0 end
+    local durability = tonumber(row.durability) or 0
+    local currentKm = calcCurrentKm(row.installed_km, vehicleKm)
+    local remaining = math.max(0, durability - currentKm)
+    local percent = calcPercent(currentKm, durability)
 
     return {
-        id           = row.id,
-        plate        = row.plate,
-        part         = row.part,
-        stage        = row.stage,
-        installed_km = row.installed_km,
-        durability   = row.durability,
-        current_km   = currentKm,
+        id = row.id,
+        plate = PRMileageSanitizePlate(row.plate),
+        part = row.part,
+        stage = tonumber(row.stage) or 1,
+        installed_km = math.floor(tonumber(row.installed_km) or 0),
+        durability = math.floor(durability),
+        current_km = currentKm,
         remaining_km = remaining,
-        percent      = math.floor(percent * 1000) / 10,  -- ex: 73.5
-        status       = resolveStatus(percent),
-        citizen_id   = row.citizen_id,
+        percent = math.floor(percent * 1000) / 10,
+        status = resolveStatus(percent),
+        citizen_id = row.citizen_id,
         installed_at = row.installed_at,
     }
 end
 
--- ============================================================
---   CALLBACKS (client → server)
--- ============================================================
+local function resolveIdentity(plate)
+    return PRMileageResolvePlate(plate)
+end
 
--- Retorna todas as peças de uma placa com info calculada
-lib.callback.register("pr_mileage:cb:getVehicleParts", function(_, plate, vehicleKm)
-    plate = sanitizePlate(plate)
-    if not plate then return false end
+local function resolveRequest(sourceId, displayedPlate, netId, refreshIdentity)
+    if netId ~= nil then
+        return PRMileageResolveVehicle(sourceId, netId, displayedPlate, refreshIdentity)
+    end
+    return nil, resolveIdentity(displayedPlate)
+end
 
-    local rows = MySQL.query.await(
-        "SELECT * FROM vehicle_parts WHERE plate = ?",
-        { plate }
-    )
-    if not rows or #rows == 0 then return {} end
+local function fetchVehicleParts(originalPlate, vehicleKm)
+    originalPlate = PRMileageSanitizePlate(originalPlate)
+    if not originalPlate then return {} end
+
+    local rows = Database.query(
+        "SELECT * FROM vehicle_parts WHERE UPPER(REPLACE(plate, ' ', '')) = ?",
+        { originalPlate }
+    ) or {}
 
     local result = {}
     for _, row in ipairs(rows) do
         result[row.part] = buildPartInfo(row, vehicleKm or 0)
     end
     return result
-end)
+end
 
--- Retorna uma peça específica de uma placa
-lib.callback.register("pr_mileage:cb:getPart", function(_, plate, partName, vehicleKm)
-    plate = sanitizePlate(plate)
-    if not plate or not partName then return false end
+local function publishVehicleParts(vehicle, parts)
+    if not vehicle then return end
+    PRMileagePartsSet(vehicle, parts or {}, true, { force = true })
+end
 
-    local row = MySQL.single.await(
-        "SELECT * FROM vehicle_parts WHERE plate = ? AND part = ?",
-        { plate, partName }
-    )
-    if not row then return false end
+local function installPart(originalPlate, partName, stage, vehicleKm, citizenId)
+    originalPlate = PRMileageSanitizePlate(originalPlate)
+    if not originalPlate or type(partName) ~= "string" or partName == "" then return false end
 
-    return buildPartInfo(row, vehicleKm or 0)
-end)
+    local partDef = Parts.Items[partName]
+    if not partDef then return false end
 
--- ============================================================
---   EVENTOS DE REDE
--- ============================================================
-
--- Instala uma peça (ou substitui se já existir)
-RegisterNetEvent("pr_mileage:sv:installPart")
-AddEventHandler("pr_mileage:sv:installPart", function(plate, partName, stage, vehicleKm, citizenId)
-    local src = source
-    plate = sanitizePlate(plate)
-    if not plate or not partName then return end
-
-    local partDef    = Parts.Items[partName]
-    local durability = 0.0
-
-    if partDef and partDef.durability then
-        -- FIX: math.floor garante que durability e installed_km são sempre inteiros
-        -- Consistente com INT UNSIGNED no banco — elimina os decimais que causavam
-        -- falsos positivos no cálculo de desgaste das peças
-        durability = math.floor(randomInRange(partDef.durability.min, partDef.durability.max))
-    end
-
-    local installedKmInt = math.floor(vehicleKm or 0)
-
-    local affected = MySQL.update.await(
-        [[
-            INSERT INTO vehicle_parts (plate, part, stage, installed_km, durability, citizen_id)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE
-                stage        = VALUES(stage),
-                installed_km = VALUES(installed_km),
-                durability   = VALUES(durability),
-                citizen_id   = VALUES(citizen_id),
-                installed_at = NOW()
-        ]],
-        { plate, partName, stage or 1, installedKmInt, durability, citizenId or nil }
-    )
-    if affected and affected > 0 then
-        TriggerClientEvent("pr_mileage:cl:partInstalled", src, plate, partName, durability)
-    end
-end)
-
--- Remove uma peça
-RegisterNetEvent("pr_mileage:sv:removePart")
-AddEventHandler("pr_mileage:sv:removePart", function(plate, partName)
-    local src = source
-    plate = sanitizePlate(plate)
-    if not plate or not partName then return end
-
-    -- FIX: MySQL.update.await para DELETE — retorna rows affected (number)
-    local affected = MySQL.update.await(
-        "DELETE FROM vehicle_parts WHERE plate = ? AND part = ?",
-        { plate, partName }
-    )
-    if affected and affected > 0 then
-        TriggerClientEvent("pr_mileage:cl:partRemoved", src, plate, partName)
-    end
-end)
-
--- ============================================================
---   EXPORTS SERVER
--- ============================================================
-
--- Retorna info de uma peça pelo banco (síncrono)
--- GetPartsPercent(plate, partName, vehicleKm) → number (0–100) | false
-exports("GetPartsPercent", function(plate, partName, vehicleKm)
-    plate = sanitizePlate(plate)
-    if not plate or not partName then return false end
-    local row = MySQL.single.await(
-        "SELECT * FROM vehicle_parts WHERE plate = ? AND part = ?",
-        { plate, partName }
-    )
-    if not row then return false end
-    local currentKm = calcCurrentKm(row.installed_km, vehicleKm or 0)
-    local percent   = calcPercent(currentKm, row.durability)
-    return math.floor(percent * 1000) / 10
-end)
-
--- GetPartsMileage(plate, partName, vehicleKm) → number (km restantes) | false
-exports("GetPartsMileage", function(plate, partName, vehicleKm)
-    plate = sanitizePlate(plate)
-    if not plate or not partName then return false end
-    local row = MySQL.single.await(
-        "SELECT * FROM vehicle_parts WHERE plate = ? AND part = ?",
-        { plate, partName }
-    )
-    if not row then return false end
-    local currentKm  = calcCurrentKm(row.installed_km, vehicleKm or 0)
-    local remaining  = row.durability - currentKm
-    return remaining > 0 and remaining or 0.0
-end)
-
--- GetPartsStatus(plate, partName, vehicleKm) → string ("Boa"|"Razoável"|"Ruim") | false
-exports("GetPartsStatus", function(plate, partName, vehicleKm)
-    plate = sanitizePlate(plate)
-    if not plate or not partName then return false end
-    local row = MySQL.single.await(
-        "SELECT * FROM vehicle_parts WHERE plate = ? AND part = ?",
-        { plate, partName }
-    )
-    if not row then return false end
-    local currentKm = calcCurrentKm(row.installed_km, vehicleKm or 0)
-    local percent   = calcPercent(currentKm, row.durability)
-    return resolveStatus(percent)
-end)
-
--- GetParts(plate, partName, vehicleKm) → tabela completa | false
-exports("GetParts", function(plate, partName, vehicleKm)
-    plate = sanitizePlate(plate)
-    if not plate or not partName then return false end
-    local row = MySQL.single.await(
-        "SELECT * FROM vehicle_parts WHERE plate = ? AND part = ?",
-        { plate, partName }
-    )
-    if not row then return false end
-    return buildPartInfo(row, vehicleKm or 0)
-end)
-
--- GetVehicleParts(plate, vehicleKm) → tabela de todas as peças | {}
-exports("GetVehicleParts", function(plate, vehicleKm)
-    plate = sanitizePlate(plate)
-    if not plate then return {} end
-    local rows = MySQL.query.await(
-        "SELECT * FROM vehicle_parts WHERE plate = ?",
-        { plate }
-    )
-    if not rows or #rows == 0 then return {} end
-    local result = {}
-    for _, row in ipairs(rows) do
-        result[row.part] = buildPartInfo(row, vehicleKm or 0)
-    end
-    return result
-end)
-
--- Instala uma peça server-side (sem precisar de evento do client)
--- installPart(plate, partName, stage, vehicleKm, citizenId)
-exports("installPart", function(plate, partName, stage, vehicleKm, citizenId)
-    plate = sanitizePlate(plate)
-    if not plate or not partName then return false end
-
-    local partDef    = Parts.Items[partName]
     local durability = 0
-    if partDef and partDef.durability then
-        -- FIX: math.floor — durability e installed_km sempre inteiros no banco
+    if partDef.durability then
         durability = math.floor(randomInRange(partDef.durability.min, partDef.durability.max))
     end
 
-    local installedKmInt = math.floor(vehicleKm or 0)
+    local affected = Database.update([[
+        INSERT INTO vehicle_parts (plate, part, stage, installed_km, durability, citizen_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            stage        = VALUES(stage),
+            installed_km = VALUES(installed_km),
+            durability   = VALUES(durability),
+            citizen_id   = VALUES(citizen_id),
+            installed_at = NOW()
+    ]], {
+        originalPlate,
+        partName,
+        tonumber(stage) or 1,
+        math.floor(tonumber(vehicleKm) or 0),
+        durability,
+        citizenId,
+    })
 
-    MySQL.update.await(
-        [[
-            INSERT INTO vehicle_parts (plate, part, stage, installed_km, durability, citizen_id)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE
-                stage        = VALUES(stage),
-                installed_km = VALUES(installed_km),
-                durability   = VALUES(durability),
-                citizen_id   = VALUES(citizen_id),
-                installed_at = NOW()
-        ]],
-        { plate, partName, stage or 1, installedKmInt, durability, citizenId or nil }
+    return affected ~= nil and affected ~= false, durability
+end
+
+local function removePart(originalPlate, partName)
+    originalPlate = PRMileageSanitizePlate(originalPlate)
+    if not originalPlate or type(partName) ~= "string" or partName == "" then return false end
+
+    local affected = Database.update(
+        "DELETE FROM vehicle_parts WHERE UPPER(REPLACE(plate, ' ', '')) = ? AND part = ?",
+        { originalPlate, partName }
     )
-    return true
+    return affected ~= nil and affected ~= false
+end
+
+-- O callback resolve a placa visual, consulta sempre pela placa original e
+-- publica a lista na entidade. O retorno serve somente como confirmação imediata.
+pr_lib.callback.register("pr_mileage:cb:getVehicleParts", function(sourceId, plate, vehicleKm, netId)
+    local vehicle, identity = resolveRequest(sourceId, plate, netId, false)
+    if not identity then return false end
+
+    vehicleKm = vehicle and PRMileageGet(vehicle, vehicleKm) or vehicleKm
+    local parts = fetchVehicleParts(identity.plate, vehicleKm)
+    publishVehicleParts(vehicle, parts)
+    return parts, identity.plate, identity
 end)
 
--- Remove uma peça server-side
+pr_lib.callback.register("pr_mileage:cb:getPart", function(sourceId, plate, partName, vehicleKm, netId)
+    local vehicle, identity = resolveRequest(sourceId, plate, netId, false)
+    if not identity or not partName then return false end
+
+    vehicleKm = vehicle and PRMileageGet(vehicle, vehicleKm) or vehicleKm
+    local parts = fetchVehicleParts(identity.plate, vehicleKm)
+    publishVehicleParts(vehicle, parts)
+    return parts[partName] or false, identity.plate, identity
+end)
+
+RegisterNetEvent("pr_mileage:sv:installPart", function(displayedPlate, partName, stage, vehicleKm, citizenId, netId)
+    local sourceId = source
+    local vehicle, identity = resolveRequest(sourceId, displayedPlate, netId, true)
+    if not vehicle or not identity then return end
+
+    local authoritativeKm = PRMileageGet(vehicle, tonumber(vehicleKm) or 0)
+    local ok, durability = installPart(identity.plate, partName, stage, authoritativeKm, citizenId)
+    if not ok then return end
+
+    local parts = fetchVehicleParts(identity.plate, authoritativeKm)
+    publishVehicleParts(vehicle, parts)
+    TriggerClientEvent("pr_mileage:cl:partInstalled", sourceId, identity.plate, partName, durability)
+end)
+
+RegisterNetEvent("pr_mileage:sv:removePart", function(displayedPlate, partName, netId)
+    local sourceId = source
+    local vehicle, identity = resolveRequest(sourceId, displayedPlate, netId, true)
+    if not vehicle or not identity or not removePart(identity.plate, partName) then return end
+
+    local vehicleKm = PRMileageGet(vehicle, 0)
+    local parts = fetchVehicleParts(identity.plate, vehicleKm)
+    publishVehicleParts(vehicle, parts)
+    TriggerClientEvent("pr_mileage:cl:partRemoved", sourceId, identity.plate, partName)
+end)
+
+local function getPart(plate, partName, vehicleKm)
+    local identity = resolveIdentity(plate)
+    if not identity or not partName then return false end
+    return fetchVehicleParts(identity.plate, vehicleKm)[partName] or false
+end
+
+exports("GetPartsPercent", function(plate, partName, vehicleKm)
+    local part = getPart(plate, partName, vehicleKm)
+    return part and part.percent or false
+end)
+
+exports("GetPartsMileage", function(plate, partName, vehicleKm)
+    local part = getPart(plate, partName, vehicleKm)
+    return part and part.remaining_km or false
+end)
+
+exports("GetPartsStatus", function(plate, partName, vehicleKm)
+    local part = getPart(plate, partName, vehicleKm)
+    return part and part.status or false
+end)
+
+exports("GetParts", getPart)
+
+exports("GetVehicleParts", function(plate, vehicleKm)
+    local identity = resolveIdentity(plate)
+    if not identity then return {} end
+    return fetchVehicleParts(identity.plate, vehicleKm)
+end)
+
+exports("installPart", function(plate, partName, stage, vehicleKm, citizenId)
+    local identity = resolveIdentity(plate)
+    if not identity then return false end
+    return installPart(identity.plate, partName, stage, vehicleKm, citizenId)
+end)
+
 exports("removePart", function(plate, partName)
-    plate = sanitizePlate(plate)
-    if not plate or not partName then return false end
-    -- FIX: MySQL.update.await para DELETE — retorna rows affected (number)
-    MySQL.update.await(
-        "DELETE FROM vehicle_parts WHERE plate = ? AND part = ?",
-        { plate, partName }
-    )
-    return true
+    local identity = resolveIdentity(plate)
+    if not identity then return false end
+    return removePart(identity.plate, partName)
 end)

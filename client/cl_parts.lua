@@ -2,14 +2,26 @@
 --   pr_mileage — CLIENT: PEÇAS E LOOP DE DESGASTE
 -- ============================================================
 
--- Cache local das peças do veículo atual
--- Formato: { [partName] = { info do banco + current_km calculado } }
-local cachedParts     = {}
-local externalParts   = nil   -- tabela/callback passado por outro script (sem banco)
-local loopRunning     = false
-local lastSavedKm     = {}    -- { [partName] = km quando salvou por último }
-local currentPlate    = nil
+-- O estado persistente do veículo vive exclusivamente nos state bags.
+local loopRunning = false
+local currentPlate = nil -- placa original resolvida pelo servidor
 local currentVehicleKm = 0.0
+
+local function displayedPlate(vehicle)
+    if not vehicle or not DoesEntityExist(vehicle) then return nil end
+    local plate = GetVehicleNumberPlateText(vehicle)
+    return plate and plate:gsub("%s+", ""):upper() or nil
+end
+
+local function getStateParts(vehicle)
+    if not vehicle or not DoesEntityExist(vehicle) then return {} end
+    return PRMileagePartsGet(vehicle)
+end
+
+local function getExternalParts(vehicle)
+    if not vehicle or not DoesEntityExist(vehicle) then return {} end
+    return PRMileageExternalPartsGet(vehicle)
+end
 
 -- ============================================================
 --   UTILITÁRIOS INTERNOS
@@ -63,14 +75,26 @@ end
 --   CARREGA PEÇAS DO BANCO AO ENTRAR NO VEÍCULO
 -- ============================================================
 
-local function loadPartsFromDB(plate, vehicleKm)
-    local parts = lib.callback.await("pr_mileage:cb:getVehicleParts", false, plate, vehicleKm)
-    if not parts then return end
-    cachedParts = parts
-    lastSavedKm = {}
-    for partName, _ in pairs(cachedParts) do
-        lastSavedKm[partName] = cachedParts[partName].current_km
+local function loadPartsFromDB(plate, vehicleKm, vehicle)
+    vehicle = vehicle or cache.vehicle
+    if not vehicle or not DoesEntityExist(vehicle) then return false end
+
+    local netId = NetworkGetNetworkIdFromEntity(vehicle)
+    local parts, originalPlate, identity = pr_lib.callback.await(
+        "pr_mileage:cb:getVehicleParts",
+        10000,
+        plate,
+        vehicleKm,
+        netId
+    )
+    if parts == false or type(parts) ~= "table" then return false end
+
+    currentPlate = originalPlate or plate
+    PRMileagePartsSet(vehicle, parts, false, { force = true })
+    if type(identity) == "table" then
+        PRMileageIdentitySet(vehicle, identity, false, { force = true })
     end
+    return true
 end
 
 -- ============================================================
@@ -84,43 +108,34 @@ local function wearTick(vehicle)
     if cache.seat ~= -1 then return true end -- não é motorista, mantém loop mas não degasta
 
     -- FIX: math.floor — vehicleKm inteiro para consistência com installed_km INT no banco
-    currentVehicleKm = math.floor(Entity(vehicle).state.vehicleMileage or currentVehicleKm)
+    currentVehicleKm = math.floor(PRMileageGet(vehicle, currentVehicleKm))
 
-    -- ── Peças do banco (cachedParts) ──────────────────────
-    for partName, entry in pairs(cachedParts) do
-        -- current_km = quanto a peça já rodou desde instalação (ambos inteiros)
-        local newCurrentKm = currentVehicleKm - math.floor(entry.installed_km or 0)
-        if newCurrentKm < 0 then newCurrentKm = 0 end
-
-        cachedParts[partName].current_km  = newCurrentKm
-        cachedParts[partName].remaining_km = calcRemainingKm(newCurrentKm, entry.durability)
-
-        -- Salva no banco a cada WearConfig.SaveThreshold km
-        local lastSaved = lastSavedKm[partName] or newCurrentKm
-        if math.abs(newCurrentKm - lastSaved) >= WearConfig.SaveThreshold then
-            -- Atualiza installed_km de forma que current = vehicleKm - installed
-            -- não há coluna current, então não salvamos (current é calculado sempre)
-            -- Só salva se durabilidade mudou ou para auditoria futura
-            lastSavedKm[partName] = newCurrentKm
-        end
+    -- As peças-base são lidas do state bag; os valores de desgaste são derivados.
+    local vehicleParts = {}
+    for partName, entry in pairs(getStateParts(vehicle)) do
+        local derived = {}
+        for key, value in pairs(entry) do derived[key] = value end
+        local newCurrentKm = math.max(0, currentVehicleKm - math.floor(entry.installed_km or 0))
+        derived.current_km = newCurrentKm
+        derived.remaining_km = calcRemainingKm(newCurrentKm, entry.durability or 0)
+        vehicleParts[partName] = derived
     end
 
     -- ── Peças externas (sem banco) ────────────────────────
-    local extTable = type(externalParts) == "function" and externalParts() or externalParts
-    if extTable then
+    local extTable = getExternalParts(vehicle)
+    if next(extTable) then
         for partName, entry in pairs(extTable) do
-            -- current_km vem de fora, não calculamos
             local driven    = currentVehicleKm - (entry.installed_km or 0)
             local current   = driven > 0 and driven or 0.0
-            extTable[partName].current_km   = current
-            extTable[partName].remaining_km = calcRemainingKm(current, entry.durability or 1)
+            entry.current_km   = current
+            entry.remaining_km = calcRemainingKm(current, entry.durability or 1)
         end
     end
 
     -- ── Aplica efeitos visuais/físicos ────────────────────
     local allParts = {}
-    for k, v in pairs(cachedParts) do allParts[k] = v end
-    if extTable then
+    for k, v in pairs(vehicleParts) do allParts[k] = v end
+    if next(extTable) then
         for k, v in pairs(extTable) do allParts[k] = v end
     end
 
@@ -158,26 +173,18 @@ end
 --   HOOKS DE CACHE — entra/sai de veículo
 -- ============================================================
 
-lib.onCache("vehicle", function(vehicle)
-    local prev = cache.vehicle
-
+pr_lib.onCache("vehicle", function(vehicle)
     if not vehicle then
-        -- Saiu do veículo: limpa cache
-        cachedParts    = {}
-        lastSavedKm    = {}
-        currentPlate   = nil
-        loopRunning    = false
+        currentPlate = nil
+        loopRunning = false
         return
     end
 
     -- Entrou em veículo: carrega peças do banco
-    local plate = GetVehicleNumberPlateText(vehicle)
+    local plate = displayedPlate(vehicle)
     if plate then
-        plate = plate:gsub("^%s*(.-)%s*$", "%1"):upper()
-        currentPlate     = plate
-        -- FIX: math.floor — installed_km no banco é INT, então vehicleKm deve ser inteiro
-        currentVehicleKm = math.floor(Entity(vehicle).state.vehicleMileage or 0)
-        loadPartsFromDB(plate, currentVehicleKm)
+        currentVehicleKm = math.floor(PRMileageGet(vehicle, 0))
+        loadPartsFromDB(plate, currentVehicleKm, vehicle)
     end
 
     startWearLoop()
@@ -191,22 +198,18 @@ CreateThread(function()
     while waited < 5000 do
         Wait(200)
         waited = waited + 200
-        if cache.vehicle and Entity(cache.vehicle).state.vehicleMileage then
+        if cache.vehicle and PRMileageGet(cache.vehicle) then
             break
         end
     end
 
     if not cache.vehicle then return end
 
-    local plate = GetVehicleNumberPlateText(cache.vehicle)
+    local plate = displayedPlate(cache.vehicle)
     if not plate then return end
 
-    plate = plate:gsub("^%s*(.-)%s*$", "%1"):upper()
-    currentPlate     = plate
-    currentVehicleKm = math.floor(Entity(cache.vehicle).state.vehicleMileage or 0)
-
-    -- Força reload do banco (garante que mudanças manuais no banco sejam lidas)
-    loadPartsFromDB(plate, currentVehicleKm)
+    currentVehicleKm = math.floor(PRMileageGet(cache.vehicle, 0))
+    loadPartsFromDB(plate, currentVehicleKm, cache.vehicle)
 
     -- Garante que o loop está rodando mesmo após restart
     loopRunning = false
@@ -240,8 +243,7 @@ end
 RegisterNetEvent("pr_mileage:cl:partInstalled")
 AddEventHandler("pr_mileage:cl:partInstalled", function(plate, partName, durability)
     if plate ~= currentPlate then return end
-    -- Recarrega as peças do banco para atualizar o cache
-    loadPartsFromDB(plate, currentVehicleKm)
+    loadPartsFromDB(displayedPlate(cache.vehicle), currentVehicleKm, cache.vehicle)
     -- Força reset imediato do handling para os valores originais do veículo
     if cache.vehicle and DoesEntityExist(cache.vehicle) then
         TriggerEvent("pr_mileage:local:resetHandling", cache.vehicle)
@@ -261,8 +263,7 @@ end)
 RegisterNetEvent("pr_mileage:cl:partRemoved")
 AddEventHandler("pr_mileage:cl:partRemoved", function(plate, partName)
     if plate ~= currentPlate then return end
-    cachedParts[partName]  = nil
-    lastSavedKm[partName]  = nil
+    -- O servidor já publicou o novo state bag sem esta peça.
 end)
 
 -- ============================================================
@@ -272,10 +273,10 @@ end)
 -- GetPartsPercent(partName) → % restante (0–100) | false
 exports("GetPartsPercent", function(partName)
     if not partName then return false end
-    local entry = cachedParts[partName]
+    local entry = getStateParts(cache.vehicle)[partName]
     if not entry then
         -- Verifica peças externas
-        local ext = type(externalParts) == "function" and externalParts() or externalParts
+        local ext = getExternalParts(cache.vehicle)
         entry = ext and ext[partName]
     end
     if not entry then return false end
@@ -286,9 +287,9 @@ end)
 -- GetPartsMileage(partName) → km restantes | false
 exports("GetPartsMileage", function(partName)
     if not partName then return false end
-    local entry = cachedParts[partName]
+    local entry = getStateParts(cache.vehicle)[partName]
     if not entry then
-        local ext = type(externalParts) == "function" and externalParts() or externalParts
+        local ext = getExternalParts(cache.vehicle)
         entry = ext and ext[partName]
     end
     if not entry then return false end
@@ -298,9 +299,9 @@ end)
 -- GetPartsStatus(partName) → "Boa" | "Razoável" | "Ruim" | false
 exports("GetPartsStatus", function(partName)
     if not partName then return false end
-    local entry = cachedParts[partName]
+    local entry = getStateParts(cache.vehicle)[partName]
     if not entry then
-        local ext = type(externalParts) == "function" and externalParts() or externalParts
+        local ext = getExternalParts(cache.vehicle)
         entry = ext and ext[partName]
     end
     if not entry then return false end
@@ -311,9 +312,9 @@ end)
 -- GetParts(partName) → tabela completa | false
 exports("GetParts", function(partName)
     if not partName then return false end
-    local entry = cachedParts[partName]
+    local entry = getStateParts(cache.vehicle)[partName]
     if not entry then
-        local ext = type(externalParts) == "function" and externalParts() or externalParts
+        local ext = getExternalParts(cache.vehicle)
         entry = ext and ext[partName]
     end
     if not entry then return false end
@@ -323,9 +324,9 @@ end)
 -- GetVehicleParts() → tabela de TODAS as peças do veículo atual | {}
 exports("GetVehicleParts", function()
     local result = {}
-    local ext    = type(externalParts) == "function" and externalParts() or externalParts
+    local ext    = getExternalParts(cache.vehicle)
 
-    for partName, entry in pairs(cachedParts) do
+    for partName, entry in pairs(getStateParts(cache.vehicle)) do
         result[partName] = buildInfo(partName, entry)
     end
     if ext then
@@ -344,36 +345,39 @@ exports("installPart", function(partName, stage, citizenId)
     if not cache.vehicle or not currentPlate then return false end
     -- FIX: math.floor — installed_km no banco é INT UNSIGNED
     TriggerServerEvent("pr_mileage:sv:installPart",
-        currentPlate, partName, stage or 1, math.floor(currentVehicleKm), citizenId or nil)
+        displayedPlate(cache.vehicle), partName, stage or 1, math.floor(currentVehicleKm),
+        citizenId or nil, NetworkGetNetworkIdFromEntity(cache.vehicle))
     return true
 end)
 
 -- Remove uma peça client-side
 exports("removePart", function(partName)
     if not currentPlate then return false end
-    TriggerServerEvent("pr_mileage:sv:removePart", currentPlate, partName)
+    TriggerServerEvent("pr_mileage:sv:removePart",
+        displayedPlate(cache.vehicle), partName, NetworkGetNetworkIdFromEntity(cache.vehicle))
     return true
 end)
 
 -- Força recarregar as peças do banco (útil após instalar via outro script)
 exports("reloadParts", function()
     if not cache.vehicle or not currentPlate then return end
-    currentVehicleKm = Entity(cache.vehicle).state.vehicleMileage or currentVehicleKm
-    loadPartsFromDB(currentPlate, currentVehicleKm)
+    currentVehicleKm = PRMileageGet(cache.vehicle, currentVehicleKm)
+    loadPartsFromDB(displayedPlate(cache.vehicle), currentVehicleKm, cache.vehicle)
 end)
 
 -- ── Opção 2: peças externas (sem banco) ──────────────────
--- Aceita tabela estática ou função que retorna tabela
+-- A tabela também é guardada no state bag da entidade.
 -- Formato: { [partName] = { installed_km=X, durability=Y, stage=Z } }
 -- Uso: exports["pr_mileage"]:setExternalParts(myTable)
---      exports["pr_mileage"]:setExternalParts(function() return myTable end)
 exports("setExternalParts", function(source)
-    externalParts = source
+    if not cache.vehicle or type(source) ~= "table" then return false end
+    return PRMileageExternalPartsSet(cache.vehicle, source, true, { force = true })
 end)
 
 -- Limpa peças externas
 exports("clearExternalParts", function()
-    externalParts = nil
+    if not cache.vehicle then return false end
+    return PRMileageExternalPartsSet(cache.vehicle, {}, true, { force = true })
 end)
 
 -- Retorna placa do veículo atual rastreado
@@ -382,157 +386,163 @@ exports("getCurrentPlate", function()
 end)
 
 -- ============================================================
---   COMANDOS
+--   COMANDOS (PR Bridge)
 -- ============================================================
 
--- /installpeca [nome_da_peca] [stage=1]
--- Instala uma peça no veículo atual. citizenId = null (NPC/sistema)
-RegisterCommand("installpeca", function(_, args)
-    local msg = function(color, text)
-        TriggerEvent("chat:addMessage", { color = color, args = {"[pr_mileage]", text} })
-    end
+local function commandMessage(color, message)
+    TriggerEvent("chat:addMessage", { color = color, args = {"[pr_mileage]", message} })
+end
 
+pr_lib.addCommand("installpeca", {
+    help = "Instala uma peça no veículo atual",
+    params = {
+        { name = "part", type = "string", optional = true, help = "Nome da peça" },
+        { name = "stage", type = "number", optional = true, help = "Estágio da peça" },
+    },
+}, function(params)
     if not cache.vehicle then
-        msg({255,80,80}, "Você não está em um veículo!")
+        commandMessage({255,80,80}, "Você não está em um veículo!")
         return
     end
 
-    local partName = args[1]
+    local partName = params.part
     if not partName then
-        msg({255,80,80}, "Uso: /installpeca [nome_da_peca] [stage]")
-        msg({200,200,200}, "Peças disponíveis: " .. table.concat((function()
-            local list = {}
-            for k in pairs(Parts.Items) do list[#list+1] = k end
-            table.sort(list)
-            return list
-        end)(), ", "))
+        local list = {}
+        for key in pairs(Parts.Items) do list[#list + 1] = key end
+        table.sort(list)
+        commandMessage({255,80,80}, "Uso: /installpeca [nome_da_peca] [stage]")
+        commandMessage({200,200,200}, "Peças disponíveis: " .. table.concat(list, ", "))
         return
     end
 
     if not Parts.Items[partName] then
-        msg({255,80,80}, ("Peça '%s' não existe em Parts.Items!"):format(partName))
+        commandMessage({255,80,80}, ("Peça '%s' não existe em Parts.Items!"):format(partName))
         return
     end
 
-    local stage = tonumber(args[2]) or 1
-
-    -- FIX: math.floor — installed_km no banco é INT UNSIGNED
-    TriggerServerEvent("pr_mileage:sv:installPart",
-        currentPlate,
+    local stage = math.floor(tonumber(params.stage) or 1)
+    local vehicle = cache.vehicle
+    local plate = displayedPlate(vehicle)
+    TriggerServerEvent(
+        "pr_mileage:sv:installPart",
+        plate,
         partName,
         stage,
         math.floor(currentVehicleKm),
-        nil  -- citizenId = null (NPC)
+        nil,
+        NetworkGetNetworkIdFromEntity(vehicle)
     )
+    commandMessage(
+        {0,200,100},
+        ("Instalando '%s' (stage %d) na placa original %s..."):format(partName, stage, currentPlate or plate)
+    )
+end)
 
-    msg({0,200,100}, ("✅ Instalando '%s' (stage %d) na placa %s..."):format(partName, stage, currentPlate))
-end, false)
-
--- /reloadpecas — força recarregar todas as peças do banco (útil após mudar no banco manualmente)
-RegisterCommand("reloadpecas", function()
-    local msg = function(color, text)
-        TriggerEvent("chat:addMessage", { color = color, args = {"[pr_mileage]", text} })
-    end
-
-    if not cache.vehicle then
-        msg({255,80,80}, "Você não está em um veículo!")
+pr_lib.addCommand("reloadpecas", {
+    help = "Recarrega as peças do veículo atual",
+}, function()
+    local vehicle = cache.vehicle
+    if not vehicle then
+        commandMessage({255,80,80}, "Você não está em um veículo!")
         return
     end
 
-    local plate = GetVehicleNumberPlateText(cache.vehicle)
+    local plate = displayedPlate(vehicle)
     if not plate then return end
-    plate = plate:gsub("^%s*(.-)%s*$", "%1"):upper()
-    currentPlate     = plate
-    currentVehicleKm = math.floor(Entity(cache.vehicle).state.vehicleMileage or 0)
 
-    loadPartsFromDB(plate, currentVehicleKm)
+    currentVehicleKm = math.floor(PRMileageGet(vehicle, 0))
+    if not loadPartsFromDB(plate, currentVehicleKm, vehicle) then
+        commandMessage({255,80,80}, "Não foi possível carregar as peças deste veículo.")
+        return
+    end
 
-    -- Reinicia o loop de desgaste para aplicar os novos valores imediatamente
     loopRunning = false
     startWearLoop()
+    commandMessage(
+        {0,200,255},
+        ("Peças recarregadas — placa original %s | odômetro %d km"):format(currentPlate or plate, currentVehicleKm)
+    )
+end)
 
-    msg({0,200,255}, ("🔄 Peças recarregadas do banco — placa %s | odômetro %d km"):format(plate, currentVehicleKm))
-end, false)
-
--- /removepeca [nome_da_peca]
-RegisterCommand("removepeca", function(_, args)
-    local msg = function(color, text)
-        TriggerEvent("chat:addMessage", { color = color, args = {"[pr_mileage]", text} })
-    end
-
-    if not cache.vehicle then
-        msg({255,80,80}, "Você não está em um veículo!")
+pr_lib.addCommand("removepeca", {
+    help = "Remove uma peça do veículo atual",
+    params = {
+        { name = "part", type = "string", optional = true, help = "Nome da peça" },
+    },
+}, function(params)
+    local vehicle = cache.vehicle
+    if not vehicle then
+        commandMessage({255,80,80}, "Você não está em um veículo!")
         return
     end
 
-    local partName = args[1]
+    local partName = params.part
     if not partName then
-        msg({255,80,80}, "Uso: /removepeca [nome_da_peca]")
+        commandMessage({255,80,80}, "Uso: /removepeca [nome_da_peca]")
         return
     end
 
-    TriggerServerEvent("pr_mileage:sv:removePart", currentPlate, partName)
-    msg({255,150,0}, ("🗑️ Removendo '%s' da placa %s..."):format(partName, currentPlate))
-end, false)
+    TriggerServerEvent(
+        "pr_mileage:sv:removePart",
+        displayedPlate(vehicle),
+        partName,
+        NetworkGetNetworkIdFromEntity(vehicle)
+    )
+    commandMessage({255,150,0}, ("Removendo '%s' da placa original %s..."):format(partName, currentPlate or "?"))
+end)
 
--- /pecas — lista todas as peças instaladas no veículo atual
-RegisterCommand("pecas", function()
-    local msg = function(color, text)
-        TriggerEvent("chat:addMessage", { color = color, args = {"[pr_mileage]", text} })
-    end
-
-    if not cache.vehicle then
-        msg({255,80,80}, "Você não está em um veículo!")
+pr_lib.addCommand("pecas", {
+    help = "Lista as peças instaladas no veículo atual",
+}, function()
+    local vehicle = cache.vehicle
+    if not vehicle then
+        commandMessage({255,80,80}, "Você não está em um veículo!")
         return
     end
 
-    if not next(cachedParts) then
-        msg({200,200,200}, ("Nenhuma peça registrada na placa %s."):format(currentPlate or "?"))
+    local parts = getStateParts(vehicle)
+    if not next(parts) then
+        commandMessage({200,200,200}, ("Nenhuma peça registrada na placa %s."):format(currentPlate or "?"))
         return
     end
 
-    local liveKm = math.floor(Entity(cache.vehicle).state.vehicleMileage or currentVehicleKm)
-    msg({0,200,255}, ("🔧 Peças instaladas — %s | Odômetro atual: %d km"):format(currentPlate or "?", liveKm))
+    local liveKm = math.floor(PRMileageGet(vehicle, currentVehicleKm))
+    commandMessage({0,200,255}, ("Peças instaladas — %s | Odômetro atual: %d km"):format(currentPlate or "?", liveKm))
 
-    for partName, entry in pairs(cachedParts) do
-        -- Recalcula com o odômetro atual (não o do momento de entrada no veículo)
+    for partName, entry in pairs(parts) do
         local installedKm = math.floor(entry.installed_km or 0)
-        local durability  = math.floor(entry.durability or 1)
-        local currentKm   = math.max(0, liveKm - installedKm)
-        local percent     = calcPercent(currentKm, durability)
-        local pct         = math.floor(percent * 1000) / 10
-        local status      = resolveStatus(percent)
-        local remaining   = math.max(0, durability - currentKm)
-
-        -- Calcula qual sintoma está ativo agora
+        local durability = math.floor(entry.durability or 1)
+        local currentKm = math.max(0, liveKm - installedKm)
+        local percent = calcPercent(currentKm, durability)
+        local pct = math.floor(percent * 1000) / 10
+        local status = resolveStatus(percent)
+        local remaining = math.max(0, durability - currentKm)
         local ratio = durability > 0 and (1.0 - (currentKm / durability)) or 0.0
-        local activeSyntom = "Nenhum"
+        local activeSymptom = "Nenhum"
         local partDef = Parts.Items[partName]
+
         if partDef and partDef.symptoms then
-            local best = nil
-            for _, s in ipairs(partDef.symptoms) do
-                if ratio <= s.threshold then
-                    if not best or s.threshold < best.threshold then best = s end
+            local best
+            for _, symptom in ipairs(partDef.symptoms) do
+                if ratio <= symptom.threshold and (not best or symptom.threshold < best.threshold) then
+                    best = symptom
                 end
             end
-            if best then activeSyntom = best.label end
+            if best then activeSymptom = best.label end
         end
 
         local color = pct >= 60 and {0,200,100} or (pct >= 30 and {255,200,0} or {255,80,80})
-
-        -- Linha principal: status e km
         TriggerEvent("chat:addMessage", {
             color = color,
-            args  = {"[pr_mileage]", ("[%s] Stage %d | %.1f%% | %d/%d km | %s"):format(
+            args = {"[pr_mileage]", ("[%s] Stage %d | %.1f%% | %d/%d km | %s"):format(
                 partName, entry.stage or 1, pct, currentKm, durability, status
             )}
         })
-        -- Linha de debug: valores raw e sintoma ativo
         TriggerEvent("chat:addMessage", {
             color = {150,150,150},
-            args  = {"[pr_mileage]", ("  ↳ instalado km=%d | rodou=%d | restam=%d | ratio=%.2f | sintoma: %s"):format(
-                installedKm, currentKm, remaining, ratio, activeSyntom
+            args = {"[pr_mileage]", ("  ↳ instalado km=%d | rodou=%d | restam=%d | ratio=%.2f | sintoma: %s"):format(
+                installedKm, currentKm, remaining, ratio, activeSymptom
             )}
         })
     end
-end, false)
+end)

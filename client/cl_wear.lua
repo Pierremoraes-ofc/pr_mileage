@@ -7,7 +7,6 @@
 local activeParticles   = {}   -- { [partName] = handle }
 local activeEffects     = {}   -- { [partName] = { type, ... } } efeitos persistentes ativos
 local wearThreadRunning = false
-local originalHandling  = {}   -- valores originais do handling do veículo atual
 
 -- Controle de estado para efeitos que sincronizam pela rede
 local engineOnState    = nil
@@ -50,12 +49,19 @@ local function captureOriginalHandling(vehicle)
 
     -- false, false = não é missão, não é rede (local only — nenhum player vê)
     local tempVeh = CreateVehicle(model, 0.0, 0.0, -1000.0, 0.0, false, false)
+    -- Defesa absoluta: um handle igual ao veiculo real jamais pode ser alterado
+    -- ou excluido por esta rotina, mesmo diante de retorno invalido da native.
+    if tempVeh == vehicle then
+        print(("[pr_mileage] clone de handling retornou o handle do veiculo real (%s); captura cancelada"):format(vehicle))
+        SetModelAsNoLongerNeeded(model)
+        return
+    end
 
-    if tempVeh and DoesEntityExist(tempVeh) then
+    if tempVeh and tempVeh ~= 0 and DoesEntityExist(tempVeh) then
         SetEntityVisible(tempVeh, false, false)
         SetEntityCollision(tempVeh, false, false)
 
-        originalHandling = {
+        PRMileageOriginalHandlingSet(vehicle, {
             fSuspensionForce       = GetVehicleHandlingFloat(tempVeh, "CHandlingData", "fSuspensionForce"),
             fSuspensionReboundDamp = GetVehicleHandlingFloat(tempVeh, "CHandlingData", "fSuspensionReboundDamp"),
             fSuspensionCompDamp    = GetVehicleHandlingFloat(tempVeh, "CHandlingData", "fSuspensionCompDamp"),
@@ -65,9 +71,13 @@ local function captureOriginalHandling(vehicle)
             fSuspensionRaise       = GetVehicleHandlingFloat(tempVeh, "CHandlingData", "fSuspensionRaise"),
             fSuspensionUpperLimit  = GetVehicleHandlingFloat(tempVeh, "CHandlingData", "fSuspensionUpperLimit"),
             fSuspensionLowerLimit  = GetVehicleHandlingFloat(tempVeh, "CHandlingData", "fSuspensionLowerLimit"),
-        }
+        }, false, { force = true })
 
-        DeleteVehicle(tempVeh)
+        -- Exclui somente o clone local validado acima.
+        if tempVeh ~= vehicle and DoesEntityExist(tempVeh) then
+            SetEntityAsMissionEntity(tempVeh, true, true)
+            DeleteVehicle(tempVeh)
+        end
     end
 
     SetModelAsNoLongerNeeded(model)
@@ -312,7 +322,7 @@ local function clearAllEffects(vehicle)
         SetVehicleUndriveable(vehicle, false)
         SetVehicleSteeringScale(vehicle, 1.0)  -- reseta direção
         
-        Exported.setOriginalHandling(vehicle, originalHandling)
+        Exported.setOriginalHandling(vehicle, PRMileageOriginalHandlingGet(vehicle))
     end
     -- Para o shake da câmera
     StopGameplayCamShaking(true)
@@ -425,47 +435,39 @@ exports("getAllParts", function()
 end)
 
 -- Limpa tudo (ao trocar de veículo, morrer etc)
-local lastVehicleRef = nil
-
-lib.onCache("vehicle", function(vehicle)
+pr_lib.onCache("vehicle", function(vehicle, previousVehicle)
     if not vehicle then
-        -- Reseta handling diretamente no veículo antes de ele sumir
-        if lastVehicleRef and DoesEntityExist(lastVehicleRef) then
-
-            Exported.setOriginalHandling(lastVehicleRef, originalHandling)
-
-            SetVehicleSteeringScale(lastVehicleRef, 1.0)
-            SetVehicleCheatPowerIncrease(lastVehicleRef, 1.0)
-            SetVehicleUndriveable(lastVehicleRef, false)
+        if previousVehicle and DoesEntityExist(previousVehicle) then
+            Exported.setOriginalHandling(previousVehicle, PRMileageOriginalHandlingGet(previousVehicle))
+            SetVehicleSteeringScale(previousVehicle, 1.0)
+            SetVehicleCheatPowerIncrease(previousVehicle, 1.0)
+            SetVehicleUndriveable(previousVehicle, false)
+            clearAllEffects(previousVehicle)
+            PRMileageOriginalHandlingSet(previousVehicle, {}, false, { force = true })
+        else
+            clearAllEffects(nil)
         end
-        clearAllEffects(lastVehicleRef)
-        lastVehicleRef   = nil
-        originalHandling = {}
+
         wearThreadRunning = false
-        engineOnState    = nil
+        engineOnState = nil
         rpmOverrideState = nil
-        stallingActive   = false
-        lastSymptomKey   = {}
-        handlingApplied  = false
+        stallingActive = false
+        lastSymptomKey = {}
+        handlingApplied = false
         StopGameplayCamShaking(true)
-    else
-        lastVehicleRef = vehicle
-        -- Captura valores originais imediatamente ao entrar no veículo
-        CreateThread(function()
-            captureOriginalHandling(vehicle)
-        end)
-        -- Reseta estados de controle para forçar reavaliação das peças
-        engineOnState    = nil
-        rpmOverrideState = nil
-        lastSymptomKey   = {}
-        -- Garante que o veículo está funcional ao entrar (reseta efeitos residuais)
-        SetVehicleUndriveable(vehicle, false)
-        SetVehicleEngineHealth(vehicle, 1000.0)
-        -- Repara pneus fisicamente (o loop vai estourar de novo se a peça estiver ruim)
-        for _, idx in ipairs({0,1,2,3,4,5,45,47}) do
-            SetVehicleTyreFixed(vehicle, idx)
-        end
+        return
     end
+
+    CreateThread(function()
+        captureOriginalHandling(vehicle)
+    end)
+    engineOnState = nil
+    rpmOverrideState = nil
+    lastSymptomKey = {}
+    SetVehicleUndriveable(vehicle, false)
+    SetVehicleEngineHealth(vehicle, 1000.0)
+    -- Entrar no veiculo nao e reparo: preserve pneus furados por dano/desgaste.
+    -- A troca de pneus confirmada em cl_parts.lua continua reparando os pneus.
 end)
 
 -- Reset imediato ao instalar peça nova
@@ -481,7 +483,7 @@ AddEventHandler("pr_mileage:local:resetHandling", function(vehicle)
     SetVehicleSteeringScale(vehicle, 1.0)
     SetVehicleCheatPowerIncrease(vehicle, 1.0)
 
-    Exported.resetPartsInstalled(vehicle, originalHandling)
+    Exported.resetPartsInstalled(vehicle, PRMileageOriginalHandlingGet(vehicle))
 
     for partName, _ in pairs(activeParticles) do
         stopParticle(partName)
@@ -540,7 +542,7 @@ AddEventHandler("pr_mileage:local:applyWear", function(vehicle, allParts)
                 stopParticle(partName)
                 if vehicle and DoesEntityExist(vehicle) then
                     
-                    Exported.resetPartsInstalled(vehicle, originalHandling)
+                    Exported.resetPartsInstalled(vehicle, PRMileageOriginalHandlingGet(vehicle))
                     
                     SetVehicleCheatPowerIncrease(vehicle, 1.0)
                     SetVehicleSteeringScale(vehicle, 1.0)
@@ -552,12 +554,8 @@ AddEventHandler("pr_mileage:local:applyWear", function(vehicle, allParts)
                             SetVehicleEngineOn(vehicle, true, false, true)
                         end
                     end
-                    local tyreParts = {tire_common=true,tire_street=true,tire_sport=true,tire_race=true,tire_semislick=true,tire_slick=true,tire_drift=true,tire_touring=true}
-                    if tyreParts[partName] then
-                        for _, idx in ipairs({0,1,2,3,4,5,45,47}) do
-                            SetVehicleTyreFixed(vehicle, idx)
-                        end
-                    end
+                    -- Limpar um sintoma nao repara dano fisico. Pneus novos
+                    -- sao reparados apenas pela confirmacao de instalacao.
                 end
                 StopGameplayCamShaking(false)
             end
